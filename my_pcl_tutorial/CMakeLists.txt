@@ -12,6 +12,9 @@ find_package(catkin REQUIRED COMPONENTS
   pcl_ros
   roscpp
   sensor_msgs
+	cv_bridge
+  image_transport
+	OpenCV REQUIRED
 )
 
 ## System dependencies are found with CMake's conventions
@@ -119,6 +122,7 @@ catkin_package(
 include_directories(
 # include
   ${catkin_INCLUDE_DIRS}
+	${OpenCV_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -153,7 +157,10 @@ add_executable(example src/example.cpp)
 #   ${catkin_LIBRARIES}
 # )
 
-target_link_libraries(example ${catkin_LIBRARIES})
+target_link_libraries(example 
+	${catkin_LIBRARIES}
+	${OpenCV_LIBRARIES}
+)
 
 
 #############
