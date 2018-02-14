@@ -20,9 +20,10 @@
 #include <pcl/geometry.h>
 
 
-#define CAMERA_PIXEL_WIDTH 1080
-#define CAMERA_PIXEL_HEIGHT 720
-
+#define CAMERA_PIXEL_WIDTH 1280
+#define CAMERA_PIXEL_HEIGHT 800
+#define LIDAR_MAX_RANGE 100
+#define RANGE_TO_GRAY_RATIO 2.55// = 255/100
 
 //publishers
 ros::Publisher pub;
@@ -35,10 +36,16 @@ image_geometry::PinholeCameraModel cam_model_;
 //point cloud objects
 pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
 pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered (new pcl::PointCloud<pcl::PointXYZ>);
+
 // point cloud filtering obects
 pcl::PassThrough<pcl::PointXYZ> pass;
 pcl::VoxelGrid<pcl::PointXYZ> sor;
 Eigen::Affine3f transform_2 = Eigen::Affine3f::Identity(); // Matrix transform from camera pose -> lidar pose
+
+// range pixels 
+Mat range_pixels; // (2d array of ranges)
+Mat range_gray_pixels;// (2d array, with ranges mapped between 0 - 255, greyscale - for visualization purposes)
+Mat range_rgb_pixels;// (3d array, with range from 0-255 mapped to rgb color - for visualization purposes)
 
 /*
 // Define a translation of 2.5 meters on the x axis.
@@ -87,10 +94,9 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	pcl::toROSMsg(*cloud_filtered, output);
   pub.publish (output);
 	
-	// Create Range Image
-  cv::Mat frame;
-  cv::Mat ranges;
-  
+  range_pixels = LIDAR_MAX_RANGE*cv::Mat::eye(CAMERA_PIXEL_HEIGHT, CAMERA_PIXEL_WIDTH,CV_64F);
+	range_gray_pixels = 255*cv::Mat::eye(CAMERA_PIXEL_HEIGHT, CAMERA_PIXEL_WIDTH,CV_64F);
+
   if(cam_model_.initialized())
   {
     // iterate through point cloud by index
@@ -102,6 +108,10 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
       cv::Point3d world_point cv::Point3d(cloud_filtered.cloud->points[0].x, cloud_filtered.cloud->points[0].y, cloud_filtered.cloud->points[0].z); 
       cv::Point2d pixel_point = cam_model_.project3dToPixel	(world_point);
       // Now, populate our 'range image' based on pixel location
+			int u = Point2d.x; //pixel index - column
+			int v = Point2d.y; //pixel index - row
+			range_pixels.at<int>(u,v) = std::min(range_pixels[u][v], distance);
+			range_gray_pixels.at<int>(u,v) = int(range_pixels[u][v] * RANGE_TO_GRAY_RATIO); 
     }
     // 
   } else {
@@ -109,7 +119,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
   }
 	
 	// Publish range image
-	sensor_msgs::ImagePtr img_msg = cv_bridge::CvImage(std_msgs::Header(), sensor_msgs::image_encodings::BGR8, frame).toImageMsg();
+	sensor_msgs::ImagePtr img_msg = cv_bridge::CvImage(std_msgs::Header(), sensor_msgs::image_encodings::MONO8, range_pixels).toImageMsg();
 	range_image_pub.publish(img_msg);
 }
 
@@ -130,7 +140,9 @@ int main (int argc, char** argv)
   ros::init (argc, argv, "my_pcl_tutorial");
   ros::NodeHandle nh;
 
-  
+  //Initialize range image matrixes
+	range_pixels = LIDAR_MAX_RANGE*cv::Mat::eye(CAMERA_PIXEL_HEIGHT, CAMERA_PIXEL_WIDTH,CV_64F);
+	range_gray_pixels = 255*cv::Mat::eye(CAMERA_PIXEL_HEIGHT, CAMERA_PIXEL_WIDTH,CV_64F);
   
   // Create a ROS subscriber for the input point cloud
   ros::Subscriber sub = nh.subscribe ("/velodyne_points", 1, cloud_cb);
