@@ -1,4 +1,5 @@
 #include <ros/ros.h>
+#include <sensor_msgs/CameraInfo.h>
 // ROS specific includes
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
@@ -23,8 +24,8 @@
 #include <math.h>
 
 
-#define CAMERA_PIXEL_WIDTH 1280
-#define CAMERA_PIXEL_HEIGHT 800
+#define CAMERA_PIXEL_WIDTH 2400
+#define CAMERA_PIXEL_HEIGHT 2400
 #define LIDAR_MAX_RANGE 100
 #define GRAY_MAX 255
 #define RANGE_TO_GRAY_RATIO 2.55// = 255/100
@@ -36,6 +37,7 @@ ros::Publisher pub_2;
 //camera objects
 image_transport::Publisher range_image_pub;
 image_geometry::PinholeCameraModel cam_model_;
+sensor_msgs::CameraInfo camera_info_msg;
 
 //point cloud objects
 pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
@@ -50,14 +52,6 @@ Eigen::Affine3f transform_2 = Eigen::Affine3f::Identity(); // Matrix transform f
 cv::Mat range_pixels; // (2d array of ranges)
 cv::Mat range_gray_pixels;// (2d array, with ranges mapped between 0 - 255, greyscale - for visualization purposes)
 cv::Mat range_rgb_pixels;// (3d array, with range from 0-255 mapped to rgb color - for visualization purposes)
-
-/*
-// Define a translation of 2.5 meters on the x axis.
-transform_2.translation() << 2.5, 0.0, 0.0;
-
-// The same rotation matrix as before; theta radians arround Z axis
-transform_2.rotate (Eigen::AngleAxisf (theta, Eigen::Vector3f::UnitZ()));
-*/
 
 void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
 {
@@ -116,8 +110,10 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 
   if(cam_model_.initialized())
   {
+		int num_points = cloud_filtered->points.size();
+		ROS_INFO("Number of points in cloud %i", num_points);
     // iterate through point cloud by index
-    for(int i = 0; i < cloud_filtered->points.size(); i++)
+    for(int i = 0; i < num_points; i++)
     {
       pcl::PointXYZ origin(0,0,0);
       //assumes camera is at the origin (0,0,0) in its frame of reference
@@ -125,15 +121,25 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 			float x = cloud_filtered->points[i].x;
 			float y = cloud_filtered->points[i].y;
 			float z = cloud_filtered->points[i].z;
-      cv::Point3d world_point = cv::Point3d(x, y, z); 
+			ROS_INFO("Index %i XYZ : (%f,%f,%f)", i,x,y,z);
+			// image: world x -> image z
+			// world z -> camera y
+			// world y -> camera x 
+      cv::Point3d world_point = cv::Point3d(-z, -x, -y); 
       cv::Point2d pixel_point = cam_model_.project3dToPixel	(world_point);
       // Now, populate our 'range image' based on pixel location
 			int u = pixel_point.x; //pixel index - column
 			int v = pixel_point.y; //pixel index - row
-			float existing_value = range_pixels.at<double>(u,v);
-			float new_distance = std::min(existing_value, distance);
-			range_pixels.at<double>(u,v) = new_distance;
-			range_gray_pixels.at<int>(u,v) = int(new_distance * RANGE_TO_GRAY_RATIO); 
+			if(u >= 0 && v >= 0 && u < CAMERA_PIXEL_WIDTH && v <	CAMERA_PIXEL_HEIGHT)
+			{
+				float existing_value = range_pixels.at<double>(u,v);
+				float new_distance = std::min(existing_value, distance);
+				range_pixels.at<double>(u,v) = new_distance;
+				range_gray_pixels.at<int>(u,v) = int(new_distance * RANGE_TO_GRAY_RATIO); 				
+				ROS_INFO("Index (u,v) (%i, %i), at %f m", u, v, new_distance);
+			} else {
+				ROS_INFO("Index (u,v) (%i, %i) out of bounds", u, v);
+			}
     }
     // 
   } else {
@@ -141,7 +147,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
   }
 	
 	// Publish range image
-	sensor_msgs::ImagePtr img_msg = cv_bridge::CvImage(std_msgs::Header(), sensor_msgs::image_encodings::MONO8, range_pixels).toImageMsg();
+	sensor_msgs::ImagePtr img_msg = cv_bridge::CvImage(std_msgs::Header(), sensor_msgs::image_encodings::MONO8, range_gray_pixels).toImageMsg();
 	range_image_pub.publish(img_msg);
 }
 
@@ -161,10 +167,16 @@ int main (int argc, char** argv)
   // Initialize ROS
   ros::init (argc, argv, "my_pcl_tutorial");
   ros::NodeHandle nh;
-
+	
   //Initialize range image matrixes
 	initialize_range_pixels();
   
+	// Define a translation matrix
+	transform_2.translation() << 1.872, 0.0, -0.655;
+
+	// The same rotation matrix as before; theta radians arround Z axis
+	//transform_2.rotate (Eigen::AngleAxisf (theta, Eigen::Vector3f::UnitZ()));
+	
   // Create a ROS subscriber for the input point cloud
   ros::Subscriber sub = nh.subscribe ("/velodyne_points", 1, cloud_cb);
 	
@@ -172,7 +184,7 @@ int main (int argc, char** argv)
   pub = nh.advertise<sensor_msgs::PointCloud2> ("lidar/cropped_cloud", 1);
 
 	// Create a ROS subscriber for the camera info
-	ros::Subscriber camera_info_sub = nh.subscribe("camera/camera_info", 1, camera_cb);
+	ros::Subscriber camera_info_sub = nh.subscribe("/videofile_test/camera_info", 1, camera_cb);
 	
 	// Create an ROS::ImageTransport publisher for the output point cloud
 	image_transport::ImageTransport it(nh);

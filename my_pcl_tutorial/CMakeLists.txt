@@ -8,7 +8,7 @@ project(my_pcl_tutorial)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  pcl_conversions
+	pcl_conversions
   pcl_ros
   roscpp
   sensor_msgs
@@ -110,7 +110,14 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES my_pcl_tutorial
-#  CATKIN_DEPENDS pcl_conversions pcl_ros roscpp sensor_msgs
+	 #CATKIN_DEPENDS   
+			#	pcl_conversions
+			#	pcl_ros
+			#	roscpp
+			#	sensor_msgs
+			#	cv_bridge
+			#	image_transport
+			#	image_geometry
 #  DEPENDS system_lib
 )
 

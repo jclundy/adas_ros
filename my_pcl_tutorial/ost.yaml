@@ -1,0 +1,20 @@
+image_width: 640
+image_height: 400
+camera_name: videofile
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [674.737926, 0.000000, 312.248683, 0.000000, 684.050005, 168.182833, 0.000000, 0.000000, 1.000000]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [-0.400051, 0.124910, 0.012675, 0.002199, 0.000000]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [606.457886, 0.000000, 311.820602, 0.000000, 0.000000, 660.463196, 168.298929, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000]
