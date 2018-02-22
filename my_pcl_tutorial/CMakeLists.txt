@@ -12,6 +12,7 @@ find_package(catkin REQUIRED COMPONENTS
   pcl_ros
   roscpp
   sensor_msgs
+  geometry_msgs
 	cv_bridge
   image_transport
   image_geometry

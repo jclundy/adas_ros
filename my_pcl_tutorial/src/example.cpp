@@ -1,5 +1,5 @@
 #include <ros/ros.h>
-#include <sensor_msgs/CameraInfo.h>
+#include <geometry_msgs/Pose2D.h>
 // ROS specific includes
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
@@ -176,7 +176,11 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	range_image_pub.publish(img_msg);
 }
 
-void frames_cb(const sensor_msgs::
+void frame_cb(const geometry_msgs::Pose2D& pose_msg)
+{
+	frame_center_X = pose_msg.x;
+	frame_center_Y = pose_msg.y;
+}
 
 void camera_cb(const sensor_msgs::CameraInfoConstPtr& info_msg)
 {
@@ -212,76 +216,13 @@ int main (int argc, char** argv)
 	// Create a ROS subscriber for the camera info
 	ros::Subscriber camera_info_sub = nh.subscribe("/videofile_test/camera_info", 1, camera_cb);
 	
-	// Create an ROS::ImageTransport publisher for the output point cloud
+	// Create a ROS::ImageTransport publisher for the output point cloud
 	image_transport::ImageTransport it(nh);
 	range_image_pub = it.advertise("lidar/range_image",1);
+	
+	// Create ROS subscriber for frame_center_sub
+	ros::Subscriber frame_center_sub = nh.subscribe("/darknet_ros/frame_center",1,frame_cb);
   
 	// Spin
   ros::spin ();
 }
-
-
-
-// Apply voxel grid	
-	/*	
-	pcl::VoxelGrid<pcl::PointXYZ> sor;
-  sor.setInputCloud (cloud_filtered);
-  sor.setLeafSize (0.1f, 0.1f, 0.1f);
-  sor.filter (*cloud_filtered);
-	*/
-
-// Upsampling
-	/*
-  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_upsampled (new pcl::PointCloud<pcl::PointXYZ>);
-	pcl::MovingLeastSquares<pcl::PointXYZ,pcl::PointXYZ> mls;
-	pcl::search::KdTree<pcl::PointXYZ>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ>);
-	mls.setInputCloud(cloud_filtered);
-	mls.setSearchMethod (tree);
-  mls.setSearchRadius (0.1);
-
-	mls.setComputeNormals (false);
-  mls.setPolynomialOrder (1);
-
-	mls.setUpsamplingMethod(pcl::MovingLeastSquares<pcl::PointXYZ, pcl::PointXYZ>::VOXEL_GRID_DILATION);
-	mls.setDilationVoxelSize (0.05f);
-	mls.setDilationIterations (1);
-	mls.process(*cloud_upsampled);
-	sensor_msgs::PointCloud2 output2;
-	pcl::toROSMsg(*cloud_upsampled, output2);
-	pub_2.publish(output2);
-	*/
-
-  
-  // Range Image
-	/*
-  float angularResolution = (float) (  1.0f * (M_PI/180.0f));  //   1.0 degree in radians
-	float angularResolutionX = (float) (  0.2f * (M_PI/180.0f));  //   1.0 degree in radians
-	float angularResolutionY = (float) (  2.0f * (M_PI/180.0f));  //   1.0 degree in radians
-  float maxAngleWidth     = (float) (180.0f * (M_PI/180.0f));  // 180.0 degree in radians
-  float maxAngleHeight    = (float) (40.0f * (M_PI/180.0f));  // 180.0 degree in radians
-	Eigen::Affine3f sensorPose = (Eigen::Affine3f)Eigen::Translation3f(-10.0f, 0.0f, 0.0f);
-  pcl::RangeImage::CoordinateFrame coordinate_frame = pcl::RangeImage::LASER_FRAME;
-  float noiseLevel=0.00;
-  float minRange = 0.0f;
-  int borderSize = 1;
-  float point_cloud_radius = 10;
-	Eigen::Vector3f point_cloud_center = Eigen::Vector3f(0,0,5);
-	
-  pcl::RangeImage range_image;
-	range_image.createFromPointCloud(*cloud_filtered, angularResolutionX, angularResolutionY,  maxAngleWidth, maxAngleHeight, sensorPose, coordinate_frame, noiseLevel, minRange, borderSize);
-	range_image.setUnseenToMaxRange();
-	
-	//range_image.setAngularResolution(0.2, 2);
-	//range_image.change3dPointsToLocalCoordinateFrame();
-	//range_image.setTransformationToRangeImageSystem(const Eigen::Affine3f & 	to_range_image_system);
-	// Range image visualization	
-	float min_range, max_range;
-	range_image.getMinMaxRanges(min_range, max_range);
-	float* ranges = range_image.getRangesArray ();
-	bool grayscale = 0;
-	unsigned char* rgb_image = pcl::visualization::FloatImageUtils::getVisualImage (ranges, range_image.width, range_image.height, min_range, max_range, grayscale);
-	cv::Mat frame =  cv::Mat(range_image.width,range_image.height, CV_8UC3, rgb_image);
-  ROS_INFO("Image width: %d, height: %d", range_image.width, range_image.height);
-  */	
-  //range_image.createFromPointCloud(*cloud_filtered, angularResolutionX, angularResolutionY, maxAngleWidth, maxAngleHeight, sensorPose, coordinate_frame, noiseLevel, minRange, borderSize);
-	//range_image.createFromPointCloudWithKnownSize (*cloud_filtered, angularResolutionY, angularResolutionX, point_cloud_center, point_cloud_radius, sensorPose, coordinate_frame, noiseLevel, minRange, borderSize);
