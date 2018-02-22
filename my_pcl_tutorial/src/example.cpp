@@ -33,8 +33,8 @@
 #define U_OFFSET 499
 #define V_OFFSET 92
 
-int frame_center_X = 0;
-int frame_center_Y = 0;
+int frame_center_X = 320;
+int frame_center_Y = 200;
 
 //U : (max,min) (723,-499); V: (max,min) (242,-92)
 // U : (max,min) (723,-499); V: (max,min) (242,-92)
@@ -65,7 +65,7 @@ cv::Mat range_rgb_pixels;// (3d array, with range from 0-255 mapped to rgb color
 void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
 {
 	pass.setInputCloud (cloud);
-  pass.setFilterFieldName ("x");
+  pass.setFilterFieldName ("z");
   pass.setFilterLimits (-10, 10);
 	pass.filter(*cloud_filtered);
 
@@ -78,7 +78,7 @@ void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::Po
 void downsample(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
 {
   sor.setInputCloud (cloud);
-  sor.setLeafSize (0.05f, 0.05f, 0.05f);
+  sor.setLeafSize (0.03f, 0.03f, 0.03f);
   sor.filter (*cloud_filtered);
 }
 
@@ -120,49 +120,52 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
   if(cam_model_.initialized())
   {
 		int num_points = cloud_filtered->points.size();
-		ROS_INFO("Number of points in cloud %i", num_points);
+		//ROS_INFO("Number of points in cloud %i", num_points);
+		
+		cv::Point2d frame_center = cv::Point2d(frame_center_X, frame_center_Y);
+		cv::Point3d ray = cam_model_.projectPixelTo3dRay(frame_center);
+		double ray_x = ray.x;
+		double ray_y = ray.y;
+		double ray_z = ray.z;
+		double lidar_x = ray_z;
+		double lidar_z = ray.y;
+		double lidar_y = ray.x;
+		//ROS_INFO("Ray (camera coord): xyz (%f,%f,%f)",ray_x,ray_y,ray_z);
+		//ROS_INFO("Ray (lidar coord): xyz (%f,%f,%f)",ray_x,ray_y,ray_z);
+		double lidar_elevation = lidar_z / lidar_x;
+		double lidar_bearing = lidar_y / lidar_x;
+		//ROS_INFO("Ray Elevation, Bearing (lidar coord): (%f,%f)",lidar_elevation,lidar_bearing);
+		pcl::PointXYZ origin(0,0,0);
+		
+		int count = 0;
+		double average_distance = 0;
+
     // iterate through point cloud by index
-		int umax = -1;
-		int umin = 2000;
-		int vmax = -1;
-		int vmin = 2000;
     for(int i = 0; i < num_points; i++)
-    {
-			
-			
-      pcl::PointXYZ origin(0,0,0);
-      //assumes camera is at the origin (0,0,0) in its frame of reference
-      float distance = calculate_distance(cloud_filtered->points[i], origin);
+    {	
+      
 			float x = cloud_filtered->points[i].x;
 			float y = cloud_filtered->points[i].y;
 			float z = cloud_filtered->points[i].z;
-			ROS_INFO("Index %i XYZ : (%f,%f,%f)", i,x,y,z);
-			// image: world x -> image z
-			// world -z -> camera y
-			// world y -> camera x 
-      cv::Point3d world_point = cv::Point3d(-y, -z, -x); // (camera_x, camera_y, camera_z)
-      cv::Point2d pixel_point = cam_model_.project3dToPixel	(world_point);
-      // Now, populate our 'range image' based on pixel location
-			int u = pixel_point.x + U_OFFSET; //pixel index - column
-			int v = pixel_point.y + V_OFFSET; //pixel index - row
+			double point_elevation = z / x;
+			double point_bearing = y / x;
+			//ROS_INFO("Point Elevation, Bearing (lidar co-ord): (%f,%f)",point_elevation,point_bearing);
 			
-			if (u > umax) umax = u;
-			if (v > vmax) vmax = v;
-			if (u < umin) umin = u;
-			if (v < vmin) vmin = v;
+      float distance = calculate_distance(cloud_filtered->points[i], origin);
+			double elevation_diff = std::abs(lidar_elevation - point_elevation);
+			double bearing_diff = std::abs(lidar_bearing - point_bearing);
+			
 
-			ROS_INFO("Index (u,v) (%i, %i), at distance %fm", u, v, distance);
-			if(u >= 0 && v >= 0 && u < CAMERA_PIXEL_WIDTH && v <	CAMERA_PIXEL_HEIGHT)
+			if(elevation_diff < 0.1 && bearing_diff < 0.1)
 			{
-				float existing_value = range_pixels.at<double>(v, u);
-				float new_distance = std::min(existing_value, distance);
-				range_pixels.at<double>(v, u) = new_distance;
-				range_gray_pixels.at<int>(v, u) = int(255 - new_distance * RANGE_TO_GRAY_RATIO); 				
-			} else {
-				ROS_INFO("Index (u,v) (%i, %i) out of bounds", u, v);
+				average_distance += distance;
+				count++;
+				//ROS_INFO("Point matches azimuth XYZ: (%f,%f,%f); Distance (%f)", x,y,z, distance);
 			}
     }
-		ROS_INFO("U : (max,min) (%i,%i); V: (max,min) (%i,%i)",umax, umin, vmax, vmin);
+		average_distance /= count;
+		ROS_INFO("Number of matching points: %i", count); 
+		ROS_INFO("Average distance (%f) to [u,v] (%i,%i)",average_distance,frame_center_X,frame_center_Y);
     // 
   } else {
     ROS_INFO("Camera model not initialized");
@@ -173,15 +176,16 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	range_image_pub.publish(img_msg);
 }
 
+void frames_cb(const sensor_msgs::
+
 void camera_cb(const sensor_msgs::CameraInfoConstPtr& info_msg)
 {
   // Initialize camera model
   if(!cam_model_.initialized())
   {
     cam_model_.fromCameraInfo(*info_msg);
+		ROS_INFO("Initialized camera model from camera info message");
   }
-  ROS_INFO("Initialized camera model from camera info message");
-  
 }
 
 int main (int argc, char** argv)
