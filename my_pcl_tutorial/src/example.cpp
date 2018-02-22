@@ -1,5 +1,7 @@
 #include <ros/ros.h>
 #include <geometry_msgs/Pose2D.h>
+#include <std_msgs/Bool.h>
+#include <std_msgs/Float32.h>
 // ROS specific includes
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
@@ -24,24 +26,29 @@
 #include <math.h>
 
 
-#define CAMERA_PIXEL_WIDTH 1222
-#define CAMERA_PIXEL_HEIGHT 334
+#define CAMERA_PIXEL_WIDTH 640
+#define CAMERA_PIXEL_HEIGHT 400
 #define LIDAR_MAX_RANGE 100
-#define GRAY_MAX 255
-#define RANGE_TO_GRAY_RATIO 2.55// = 255/100
 
-#define U_OFFSET 499
-#define V_OFFSET 92
+#define CENTER_X 320
+#define CENTER_U 200
 
 int frame_center_X = 320;
-int frame_center_Y = 200;
+int frame_center_Y = 150;
 
-//U : (max,min) (723,-499); V: (max,min) (242,-92)
-// U : (max,min) (723,-499); V: (max,min) (242,-92)
-// : (max,min) (723,-499); V: (max,min) (244,-92)
+bool frame_detected = false;
+int no_detection_count = 0;
+double previous_distance = 0;
+
+double old_range = 0;
+double range_rate = 0;
+double prev_range_rate = 0;
+
+
 //publishers
 ros::Publisher pub;
 ros::Publisher pub_2;
+ros::Publisher distancePub;
 
 //camera objects
 image_transport::Publisher range_image_pub;
@@ -82,11 +89,6 @@ void downsample(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::
   sor.filter (*cloud_filtered);
 }
 
-void initialize_range_pixels()
-{
-	range_pixels = LIDAR_MAX_RANGE*cv::Mat::eye(CAMERA_PIXEL_HEIGHT, CAMERA_PIXEL_WIDTH,CV_32F);
-	range_gray_pixels = GRAY_MAX*cv::Mat::eye(CAMERA_PIXEL_HEIGHT, CAMERA_PIXEL_WIDTH,CV_8U);
-}
 
 float calculate_distance(pcl::PointXYZ p1, pcl::PointXYZ p2)
 {
@@ -114,8 +116,6 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
   sensor_msgs::PointCloud2 output;
 	pcl::toROSMsg(*cloud_filtered, output);
   pub.publish (output);
-	
-  initialize_range_pixels();
 
   if(cam_model_.initialized())
   {
@@ -139,7 +139,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		
 		int count = 0;
 		double average_distance = 0;
-
+		
     // iterate through point cloud by index
     for(int i = 0; i < num_points; i++)
     {	
@@ -164,22 +164,52 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 			}
     }
 		average_distance /= count;
-		ROS_INFO("Number of matching points: %i", count); 
-		ROS_INFO("Average distance (%f) to [u,v] (%i,%i)",average_distance,frame_center_X,frame_center_Y);
+		if(frame_detected)
+		{
+			//ROS_INFO("Number of matching points: %i", count); 
+			//ROS_INFO("Average distance (%f) to [u,v] (%i,%i)",average_distance,frame_center_X,frame_center_Y);
+		} else {
+			//ROS_INFO("No frame detected"); 
+			average_distance = std::nan("100");
+			//ROS_INFO("Average distance (%f) to center of image [u,v] (%i,%i)",average_distance,frame_center_X,frame_center_Y);
+		}
+		/*if(!std::isnan(average_distance) && !std::isnan(old_range))
+		{
+			range_rate = (old_range - average_distance) * 10 + prev_range_rate / 2;
+		} else {
+			range_rate = std::nan("100");
+		}	*/
+		//old_range = average_distance;
+		//ROS_INFO("Range(%f) Range Rate (%f)",average_distance,range_rate);
+		std_msgs::Float32 dist_msg;
+		dist_msg.data = average_distance;
+		distancePub.publish(dist_msg);
     // 
   } else {
     ROS_INFO("Camera model not initialized");
   }
-	
-	// Publish range image
-	sensor_msgs::ImagePtr img_msg = cv_bridge::CvImage(std_msgs::Header(), sensor_msgs::image_encodings::MONO8, range_gray_pixels).toImageMsg();
-	range_image_pub.publish(img_msg);
 }
 
 void frame_cb(const geometry_msgs::Pose2D& pose_msg)
 {
+	//frame_detected = true;
 	frame_center_X = pose_msg.x;
 	frame_center_Y = pose_msg.y;
+}
+
+void frame_detected_cb(const std_msgs::Bool& frame_detected_msg)
+{
+	if(frame_detected_msg.data)
+	{
+		frame_detected = true;
+	} else {
+		no_detection_count++;
+		if(no_detection_count > 40)
+		{
+			frame_detected = false;
+			no_detection_count = 0;
+		}
+	}
 }
 
 void camera_cb(const sensor_msgs::CameraInfoConstPtr& info_msg)
@@ -197,9 +227,6 @@ int main (int argc, char** argv)
   // Initialize ROS
   ros::init (argc, argv, "my_pcl_tutorial");
   ros::NodeHandle nh;
-	
-  //Initialize range image matrixes
-	initialize_range_pixels();
   
 	// Define a translation matrix
 	transform_2.translation() << 1.872, 0.0, -0.655;
@@ -222,7 +249,10 @@ int main (int argc, char** argv)
 	
 	// Create ROS subscriber for frame_center_sub
 	ros::Subscriber frame_center_sub = nh.subscribe("/darknet_ros/frame_center",1,frame_cb);
+	ros::Subscriber frame_detected_sub = nh.subscribe("/darknet_ros/frame_detected",1,frame_detected_cb);
   
+	distancePub = nh.advertise<std_msgs::Float32>("/darknet_ros/distance",1);
+		
 	// Spin
   ros::spin ();
 }
