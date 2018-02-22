@@ -24,12 +24,21 @@
 #include <math.h>
 
 
-#define CAMERA_PIXEL_WIDTH 2400
-#define CAMERA_PIXEL_HEIGHT 2400
+#define CAMERA_PIXEL_WIDTH 1222
+#define CAMERA_PIXEL_HEIGHT 334
 #define LIDAR_MAX_RANGE 100
 #define GRAY_MAX 255
 #define RANGE_TO_GRAY_RATIO 2.55// = 255/100
 
+#define U_OFFSET 499
+#define V_OFFSET 92
+
+int frame_center_X = 0;
+int frame_center_Y = 0;
+
+//U : (max,min) (723,-499); V: (max,min) (242,-92)
+// U : (max,min) (723,-499); V: (max,min) (242,-92)
+// : (max,min) (723,-499); V: (max,min) (244,-92)
 //publishers
 ros::Publisher pub;
 ros::Publisher pub_2;
@@ -69,7 +78,7 @@ void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::Po
 void downsample(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
 {
   sor.setInputCloud (cloud);
-  sor.setLeafSize (0.1f, 0.1f, 0.1f);
+  sor.setLeafSize (0.05f, 0.05f, 0.05f);
   sor.filter (*cloud_filtered);
 }
 
@@ -113,8 +122,14 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		int num_points = cloud_filtered->points.size();
 		ROS_INFO("Number of points in cloud %i", num_points);
     // iterate through point cloud by index
+		int umax = -1;
+		int umin = 2000;
+		int vmax = -1;
+		int vmin = 2000;
     for(int i = 0; i < num_points; i++)
     {
+			
+			
       pcl::PointXYZ origin(0,0,0);
       //assumes camera is at the origin (0,0,0) in its frame of reference
       float distance = calculate_distance(cloud_filtered->points[i], origin);
@@ -123,24 +138,31 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 			float z = cloud_filtered->points[i].z;
 			ROS_INFO("Index %i XYZ : (%f,%f,%f)", i,x,y,z);
 			// image: world x -> image z
-			// world z -> camera y
+			// world -z -> camera y
 			// world y -> camera x 
-      cv::Point3d world_point = cv::Point3d(-z, -x, -y); 
+      cv::Point3d world_point = cv::Point3d(-y, -z, -x); // (camera_x, camera_y, camera_z)
       cv::Point2d pixel_point = cam_model_.project3dToPixel	(world_point);
       // Now, populate our 'range image' based on pixel location
-			int u = pixel_point.x; //pixel index - column
-			int v = pixel_point.y; //pixel index - row
+			int u = pixel_point.x + U_OFFSET; //pixel index - column
+			int v = pixel_point.y + V_OFFSET; //pixel index - row
+			
+			if (u > umax) umax = u;
+			if (v > vmax) vmax = v;
+			if (u < umin) umin = u;
+			if (v < vmin) vmin = v;
+
+			ROS_INFO("Index (u,v) (%i, %i), at distance %fm", u, v, distance);
 			if(u >= 0 && v >= 0 && u < CAMERA_PIXEL_WIDTH && v <	CAMERA_PIXEL_HEIGHT)
 			{
-				float existing_value = range_pixels.at<double>(u,v);
+				float existing_value = range_pixels.at<double>(v, u);
 				float new_distance = std::min(existing_value, distance);
-				range_pixels.at<double>(u,v) = new_distance;
-				range_gray_pixels.at<int>(u,v) = int(new_distance * RANGE_TO_GRAY_RATIO); 				
-				ROS_INFO("Index (u,v) (%i, %i), at %f m", u, v, new_distance);
+				range_pixels.at<double>(v, u) = new_distance;
+				range_gray_pixels.at<int>(v, u) = int(255 - new_distance * RANGE_TO_GRAY_RATIO); 				
 			} else {
 				ROS_INFO("Index (u,v) (%i, %i) out of bounds", u, v);
 			}
     }
+		ROS_INFO("U : (max,min) (%i,%i); V: (max,min) (%i,%i)",umax, umin, vmax, vmin);
     // 
   } else {
     ROS_INFO("Camera model not initialized");
