@@ -130,7 +130,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		double lidar_x = ray_z;
 		double lidar_z = ray.y;
 		double lidar_y = ray.x;
-		//ROS_INFO("Ray (camera coord): xyz (%f,%f,%f)",ray_x,ray_y,ray_z);
+		ROS_INFO("Ray (camera coord): xyz (%f,%f,%f)",ray_x,ray_y,ray_z);
 		//ROS_INFO("Ray (lidar coord): xyz (%f,%f,%f)",ray_x,ray_y,ray_z);
 		double lidar_elevation = lidar_z / lidar_x;
 		double lidar_bearing = lidar_y / lidar_x;
@@ -139,7 +139,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		
 		int count = 0;
 		double average_distance = 0;
-		
+		double average_latitude = 0;
     // iterate through point cloud by index
     for(int i = 0; i < num_points; i++)
     {	
@@ -152,6 +152,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 			//ROS_INFO("Point Elevation, Bearing (lidar co-ord): (%f,%f)",point_elevation,point_bearing);
 			
       float distance = calculate_distance(cloud_filtered->points[i], origin);
+			
 			double elevation_diff = std::abs(lidar_elevation - point_elevation);
 			double bearing_diff = std::abs(lidar_bearing - point_bearing);
 			
@@ -159,20 +160,23 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 			if(elevation_diff < 0.1 && bearing_diff < 0.1)
 			{
 				average_distance += distance;
+				average_latitude += y;
 				count++;
 				//ROS_INFO("Point matches azimuth XYZ: (%f,%f,%f); Distance (%f)", x,y,z, distance);
 			}
     }
 		average_distance /= count;
+		average_latitude /= count;
 		if(frame_detected)
 		{
 			//ROS_INFO("Number of matching points: %i", count); 
 			//ROS_INFO("Average distance (%f) to [u,v] (%i,%i)",average_distance,frame_center_X,frame_center_Y);
 		} else {
 			//ROS_INFO("No frame detected"); 
-			average_distance = std::nan("100");
-			//ROS_INFO("Average distance (%f) to center of image [u,v] (%i,%i)",average_distance,frame_center_X,frame_center_Y);
+			//average_distance = std::nan("100");
+			average_distance = 100; 			
 		}
+		ROS_INFO("Average distance (%f) average_latitude (%f) to center of image [u,v] (%i,%i)",average_distance, average_latitude,frame_center_X,frame_center_Y);
 		/*if(!std::isnan(average_distance) && !std::isnan(old_range))
 		{
 			range_rate = (old_range - average_distance) * 10 + prev_range_rate / 2;
