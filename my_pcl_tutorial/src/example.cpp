@@ -141,6 +141,9 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		double average_distance = 0;
 		double average_latitude = 0;
     // iterate through point cloud by index
+		vector<double> distances(20);
+		vector<double> latitudes(20);
+		
     for(int i = 0; i < num_points; i++)
     {	
       
@@ -156,15 +159,57 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 			double elevation_diff = std::abs(lidar_elevation - point_elevation);
 			double bearing_diff = std::abs(lidar_bearing - point_bearing);
 			
-
-			if(elevation_diff < 0.1 && bearing_diff < 0.1)
+			double tolerance = 0.1;
+			if(elevation_diff < tolerance && bearing_diff < tolerance)
 			{
+				distances.pushback(distance);
+				latitudes.pushback(y);
+				
 				average_distance += distance;
 				average_latitude += y;
 				count++;
 				//ROS_INFO("Point matches azimuth XYZ: (%f,%f,%f); Distance (%f)", x,y,z, distance);
 			}
     }
+		// generate sorted list of points
+		std::sort (distances.begin(), distances.end());
+		std::sort (distances.begin(), latitudes.end());
+		// create coarse histogram
+		int numPoints = distances.size();
+		int min = std::floor(distances[0]);
+		int max = std::ceil(distances[numPoints-1]);
+		int bin_width = 1; //1 meter
+		int num_bins = (max - min)/bin_width;
+		
+		vector<int> bin_indexes(num_bins);
+		vector<int> bin_count(num_bins);		
+		
+		int current_bin = 0;		
+		int current_threshold = min + bin_width;
+		int max_count = 0;
+		int max_bin_index = 0;				
+		for(int i = 0; i < numPoints; i++)
+		{
+			double current_value = distances[i];
+			if(floor(current_value)) > current_threshold)
+			{
+				bin_indexes[current_bin] = i;	
+				current_bin +=1;
+				current_threshold += bin_width;				
+			}
+			bin_count[current_bin] += 1;
+			// update which histogram bin is the largest
+			if(bin_count[current_bin] > max_count)
+			{
+				max_count = bin_count[current_bin];
+				max_bin_index = current_bin;
+			}
+		}
+
+		// remarks - can check for Nan
+		// can construct histogram without sorting
+		double winning_distance = max_bin_index * bin_width;
+	 
 		average_distance /= count;
 		average_latitude /= count;
 		if(frame_detected)
