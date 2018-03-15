@@ -141,8 +141,8 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		double average_distance = 0;
 		double average_latitude = 0;
     // iterate through point cloud by index
-		vector<double> distances(20);
-		vector<double> latitudes(20);
+		std::vector<double> distances(20);
+		std::vector<double> latitudes(20);
 		
     for(int i = 0; i < num_points; i++)
     {	
@@ -162,8 +162,8 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 			double tolerance = 0.1;
 			if(elevation_diff < tolerance && bearing_diff < tolerance)
 			{
-				distances.pushback(distance);
-				latitudes.pushback(y);
+				distances.push_back(distance);
+				latitudes.push_back(y);
 				
 				average_distance += distance;
 				average_latitude += y;
@@ -181,8 +181,8 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		int bin_width = 1; //1 meter
 		int num_bins = (max - min)/bin_width;
 		
-		vector<int> bin_indexes(num_bins);
-		vector<int> bin_count(num_bins);		
+		std::vector<int> bin_indexes(num_bins);
+		std::vector<int> bin_count(num_bins);		
 		
 		int current_bin = 0;		
 		int current_threshold = min + bin_width;
@@ -191,7 +191,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		for(int i = 0; i < numPoints; i++)
 		{
 			double current_value = distances[i];
-			if(floor(current_value)) > current_threshold)
+			if(floor(current_value) > current_threshold)
 			{
 				bin_indexes[current_bin] = i;	
 				current_bin +=1;
