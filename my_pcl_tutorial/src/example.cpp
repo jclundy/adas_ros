@@ -89,7 +89,6 @@ void downsample(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::
   sor.filter (*cloud_filtered);
 }
 
-
 float calculate_distance(pcl::PointXYZ p1, pcl::PointXYZ p2)
 {
 	float dx = p1.x - p2.x;
@@ -174,12 +173,20 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		// generate sorted list of points
 		std::sort (distances.begin(), distances.end());
 		std::sort (distances.begin(), latitudes.end());
+		int numPoints = distances.size();		
+		// print distances
+		std::printf("sorted distance list \n");
+		std::printf("%i points\n", numPoints);
+		for(int i = 0; i < numPoints; i++)
+		{
+			std::printf("%f,", distances[i]);
+		}
 		// create coarse histogram
-		int numPoints = distances.size();
+		
 		int min = std::floor(distances[0]);
 		int max = std::ceil(distances[numPoints-1]);
-		int bin_width = 1; //1 meter
-		int num_bins = (max - min)/bin_width;
+		double bin_width = 1; //1 meter
+		int num_bins = std::ceil((max - min)/bin_width);
 		
 		std::vector<int> bin_indexes(num_bins);
 		std::vector<int> bin_count(num_bins);		
@@ -208,6 +215,16 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 
 		// remarks - can check for Nan
 		// can construct histogram without sorting
+		
+		// print histogram
+		std::printf("Histogram \n");
+		std::printf("%i bins\n", num_bins);
+		for(int i = 0; i < num_bins; i++)
+		{
+			double distance = i * bin_width;
+			std::printf("distance: %f, count %i \n", distance, bin_count[i]);
+		}
+		//		
 		double winning_distance = max_bin_index * bin_width;
 	 
 		average_distance /= count;
