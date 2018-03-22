@@ -119,7 +119,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
   if(cam_model_.initialized())
   {
 		int num_points = cloud_filtered->points.size();
-		//ROS_INFO("Number of points in cloud %i", num_points);
+		////ROS_INFO("Number of points in cloud %i", num_points);
 		
 		cv::Point2d frame_center = cv::Point2d(frame_center_X, frame_center_Y);
 		cv::Point3d ray = cam_model_.projectPixelTo3dRay(frame_center);
@@ -129,19 +129,19 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		double lidar_x = ray_z;
 		double lidar_z = ray.y;
 		double lidar_y = ray.x;
-		ROS_INFO("Ray (camera coord): xyz (%f,%f,%f)",ray_x,ray_y,ray_z);
-		//ROS_INFO("Ray (lidar coord): xyz (%f,%f,%f)",ray_x,ray_y,ray_z);
+		//ROS_INFO("Ray (camera coord): xyz (%f,%f,%f)",ray_x,ray_y,ray_z);
+		////ROS_INFO("Ray (lidar coord): xyz (%f,%f,%f)",ray_x,ray_y,ray_z);
 		double lidar_elevation = lidar_z / lidar_x;
 		double lidar_bearing = lidar_y / lidar_x;
-		//ROS_INFO("Ray Elevation, Bearing (lidar coord): (%f,%f)",lidar_elevation,lidar_bearing);
+		////ROS_INFO("Ray Elevation, Bearing (lidar coord): (%f,%f)",lidar_elevation,lidar_bearing);
 		pcl::PointXYZ origin(0,0,0);
 		
 		int count = 0;
 		double average_distance = 0;
 		double average_latitude = 0;
     // iterate through point cloud by index
-		std::vector<double> distances(20);
-		std::vector<double> latitudes(20);
+		std::vector<double> distances(0);
+		std::vector<double> latitudes(0);
 		
     for(int i = 0; i < num_points; i++)
     {	
@@ -151,15 +151,15 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 			float z = cloud_filtered->points[i].z;
 			double point_elevation = z / x;
 			double point_bearing = y / x;
-			//ROS_INFO("Point Elevation, Bearing (lidar co-ord): (%f,%f)",point_elevation,point_bearing);
+			////ROS_INFO("Point Elevation, Bearing (lidar co-ord): (%f,%f)",point_elevation,point_bearing);
 			
-      float distance = calculate_distance(cloud_filtered->points[i], origin);
+      double distance = calculate_distance(cloud_filtered->points[i], origin);
 			
 			double elevation_diff = std::abs(lidar_elevation - point_elevation);
 			double bearing_diff = std::abs(lidar_bearing - point_bearing);
 			
-			double tolerance = 0.1;
-			if(elevation_diff < tolerance && bearing_diff < tolerance)
+			double tolerance = 0.0174533;
+			if(elevation_diff <= tolerance && bearing_diff <= tolerance && distance > 0.01)
 			{
 				distances.push_back(distance);
 				latitudes.push_back(y);
@@ -167,23 +167,23 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 				average_distance += distance;
 				average_latitude += y;
 				count++;
-				//ROS_INFO("Point matches azimuth XYZ: (%f,%f,%f); Distance (%f)", x,y,z, distance);
+				////ROS_INFO("Point matches azimuth XYZ: (%f,%f,%f); Distance (%f)", x,y,z, distance);
 			}
     }
 		// generate sorted list of points
 		std::sort (distances.begin(), distances.end());
-		std::sort (distances.begin(), latitudes.end());
-		int numPoints = distances.size();		
+		std::sort (latitudes.begin(), latitudes.end());
+		int numPoints = count;		
 		// print distances
 		std::printf("sorted distance list \n");
-		std::printf("%i points\n", numPoints);
-		for(int i = 0; i < numPoints; i++)
+		std::printf("%i points\n", count);
+		for(int i = 0; i < count; i++)
 		{
 			std::printf("%f,", distances[i]);
 		}
 		// create coarse histogram
 		
-		int min = std::floor(distances[0]);
+		/*int min = std::floor(distances[0]);
 		int max = std::ceil(distances[numPoints-1]);
 		double bin_width = 1; //1 meter
 		int num_bins = std::ceil((max - min)/bin_width);
@@ -211,34 +211,34 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 				max_count = bin_count[current_bin];
 				max_bin_index = current_bin;
 			}
-		}
+		}*/
 
 		// remarks - can check for Nan
 		// can construct histogram without sorting
 		
 		// print histogram
-		std::printf("Histogram \n");
-		std::printf("%i bins\n", num_bins);
-		for(int i = 0; i < num_bins; i++)
+		//std::printf("Histogram \n");
+		//std::printf("%i bins\n", num_bins);
+		/*for(int i = 0; i < num_bins; i++)
 		{
 			double distance = i * bin_width;
-			std::printf("distance: %f, count %i \n", distance, bin_count[i]);
-		}
+			//std::printf("distance: %f, count %i \n", distance, bin_count[i]);
+		}*/
 		//		
-		double winning_distance = max_bin_index * bin_width;
+		//double winning_distance = max_bin_index * bin_width;
 	 
 		average_distance /= count;
 		average_latitude /= count;
 		if(frame_detected)
 		{
-			//ROS_INFO("Number of matching points: %i", count); 
-			//ROS_INFO("Average distance (%f) to [u,v] (%i,%i)",average_distance,frame_center_X,frame_center_Y);
+			////ROS_INFO("Number of matching points: %i", count); 
+			////ROS_INFO("Average distance (%f) to [u,v] (%i,%i)",average_distance,frame_center_X,frame_center_Y);
 		} else {
-			//ROS_INFO("No frame detected"); 
+			////ROS_INFO("No frame detected"); 
 			//average_distance = std::nan("100");
 			average_distance = 100; 			
 		}
-		ROS_INFO("Average distance (%f) average_latitude (%f) to center of image [u,v] (%i,%i)",average_distance, average_latitude,frame_center_X,frame_center_Y);
+		//ROS_INFO("Average distance (%f) average_latitude (%f) to center of image [u,v] (%i,%i)",average_distance, average_latitude,frame_center_X,frame_center_Y);
 		/*if(!std::isnan(average_distance) && !std::isnan(old_range))
 		{
 			range_rate = (old_range - average_distance) * 10 + prev_range_rate / 2;
@@ -246,13 +246,13 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 			range_rate = std::nan("100");
 		}	*/
 		//old_range = average_distance;
-		//ROS_INFO("Range(%f) Range Rate (%f)",average_distance,range_rate);
+		////ROS_INFO("Range(%f) Range Rate (%f)",average_distance,range_rate);
 		std_msgs::Float32 dist_msg;
 		dist_msg.data = average_distance;
 		distancePub.publish(dist_msg);
     // 
   } else {
-    ROS_INFO("Camera model not initialized");
+    //ROS_INFO("Camera model not initialized");
   }
 }
 
@@ -284,7 +284,7 @@ void camera_cb(const sensor_msgs::CameraInfoConstPtr& info_msg)
   if(!cam_model_.initialized())
   {
     cam_model_.fromCameraInfo(*info_msg);
-		ROS_INFO("Initialized camera model from camera info message");
+		//ROS_INFO("Initialized camera model from camera info message");
   }
 }
 
