@@ -291,7 +291,7 @@ void camera_cb(const sensor_msgs::CameraInfoConstPtr& info_msg)
 int main (int argc, char** argv)
 {
   // Initialize ROS
-  ros::init (argc, argv, "my_pcl_tutorial");
+  ros::init (argc, argv, "lidar_ranging");
   ros::NodeHandle nh;
   
 	// Define a translation matrix

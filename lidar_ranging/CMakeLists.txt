@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(my_pcl_tutorial)
+project(lidar_ranging)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)
@@ -110,7 +110,7 @@ find_package(catkin REQUIRED COMPONENTS
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
 #  INCLUDE_DIRS include
-#  LIBRARIES my_pcl_tutorial
+#  LIBRARIES lidar_ranging
 	 #CATKIN_DEPENDS   
 			#	pcl_conversions
 			#	pcl_ros
@@ -136,7 +136,7 @@ include_directories(
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
-#   src/${PROJECT_NAME}/my_pcl_tutorial.cpp
+#   src/${PROJECT_NAME}/lidar_ranging.cpp
 # )
 
 ## Add cmake target dependencies of the library
@@ -147,9 +147,9 @@ include_directories(
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-# add_executable(${PROJECT_NAME}_node src/my_pcl_tutorial_node.cpp)
+# add_executable(${PROJECT_NAME}_node src/lidar_ranging_node.cpp)
 
-add_executable(example src/example.cpp)
+add_executable(lidar_ranging src/lidar_ranging.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -166,7 +166,7 @@ add_executable(example src/example.cpp)
 #   ${catkin_LIBRARIES}
 # )
 
-target_link_libraries(example 
+target_link_libraries( lidar_ranging
 	${catkin_LIBRARIES}
 	${OpenCV_LIBRARIES}
 )
@@ -212,7 +212,7 @@ target_link_libraries(example
 #############
 
 ## Add gtest based cpp test target and link libraries
-# catkin_add_gtest(${PROJECT_NAME}-test test/test_my_pcl_tutorial.cpp)
+# catkin_add_gtest(${PROJECT_NAME}-test test/test_lidar_ranging.cpp)
 # if(TARGET ${PROJECT_NAME}-test)
 #   target_link_libraries(${PROJECT_NAME}-test ${PROJECT_NAME})
 # endif()
