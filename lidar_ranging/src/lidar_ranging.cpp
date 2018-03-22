@@ -175,6 +175,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		std::sort (latitudes.begin(), latitudes.end());
 		int numPoints = count;		
 		// print distances
+		
 		std::printf("sorted distance list \n");
 		std::printf("%i points\n", count);
 		for(int i = 0; i < count; i++)
@@ -183,8 +184,8 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		}
 		// create coarse histogram
 		
-		/*int min = std::floor(distances[0]);
-		int max = std::ceil(distances[numPoints-1]);
+		int min = std::floor(distances[0]);
+		int max = std::ceil(distances[count-1]);
 		double bin_width = 1; //1 meter
 		int num_bins = std::ceil((max - min)/bin_width);
 		
@@ -211,22 +212,31 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 				max_count = bin_count[current_bin];
 				max_bin_index = current_bin;
 			}
-		}*/
+		}
 
 		// remarks - can check for Nan
 		// can construct histogram without sorting
 		
 		// print histogram
-		//std::printf("Histogram \n");
-		//std::printf("%i bins\n", num_bins);
-		/*for(int i = 0; i < num_bins; i++)
+		std::printf("Histogram \n");
+		std::printf("%i bins\n", num_bins);
+		for(int i = 0; i < num_bins; i++)
 		{
 			double distance = i * bin_width;
-			//std::printf("distance: %f, count %i \n", distance, bin_count[i]);
-		}*/
-		//		
-		//double winning_distance = max_bin_index * bin_width;
-	 
+			std::printf("distance: %f, count %i \n", distance, bin_count[i]);
+		}
+		//		 		
+		double winning_distance = max_bin_index * bin_width + bin_width/2;
+		std::printf("Winning distance: %f \n",winning_distance);		
+		/*int start = bin_indexes[max_bin_index];
+		int end = bin_indexes[max_bin_index + 1];
+		double average_of_bin_values = 0;
+		int total = end - start;
+		for(int i = start; i < end; i++)
+		{
+			average_of_bin_values += distances[i];
+		}
+	  */
 		average_distance /= count;
 		average_latitude /= count;
 		if(frame_detected)
