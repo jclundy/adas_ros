@@ -44,6 +44,7 @@ double old_range = 0;
 double range_rate = 0;
 double prev_range_rate = 0;
 
+double prev_range = 100;
 
 //publishers
 ros::Publisher pub;
@@ -183,62 +184,74 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 			std::printf("%f,", distances[i]);
 		}
 		// create coarse histogram
-		
-		int min = std::floor(distances[0]);
-		int max = std::ceil(distances[count-1]);
-		double bin_width = 1; //1 meter
-		int num_bins = std::ceil((max - min)/bin_width);
-		
-		std::vector<int> bin_indexes(num_bins);
-		std::vector<int> bin_count(num_bins);		
-		
-		int current_bin = 0;		
-		int current_threshold = min + bin_width;
-		int max_count = 0;
-		int max_bin_index = 0;				
-		for(int i = 0; i < numPoints; i++)
+		double winning_distance = prev_range;
+		if(count > 0) 
 		{
-			double current_value = distances[i];
-			if(floor(current_value) > current_threshold)
+			int min = std::floor(distances[0]);
+			std::printf("\nmin %i \n",min); 		
+			int max = std::ceil(distances[count-1]);
+			std::printf("max %i \n",max);
+			double bin_width = 1; //1 meter
+			int num_bins = std::ceil((max - min)/bin_width);
+			std::printf("num bins %i \n",num_bins);
+			std::vector<int> bin_indexes(num_bins+1);
+			std::vector<int> bin_count(num_bins);		
+		
+			int current_bin = 1;		
+			int current_threshold = min;
+			int max_count = 0;
+			int max_bin_index = 0;
+			//std::printf("building histogram\n");				
+			bin_indexes[0] = 0;			
+			for(int i = 0; i < numPoints; i++)
 			{
-				bin_indexes[current_bin] = i;	
-				current_bin +=1;
-				current_threshold += bin_width;				
+				double current_value = distances[i];
+				if(floor(current_value) > current_threshold)
+				{
+					//std::printf("new bin\n");
+					bin_indexes[current_bin] = i;	
+					current_bin +=1;
+					current_threshold += bin_width;				
+				}
+				bin_count[current_bin] += 1;
+				// update which histogram bin is the largest
+				if(bin_count[current_bin] > max_count)
+				{
+					//std::printf("new winning bin\n");
+					max_count = bin_count[current_bin];
+					max_bin_index = current_bin;
+				}
 			}
-			bin_count[current_bin] += 1;
-			// update which histogram bin is the largest
-			if(bin_count[current_bin] > max_count)
-			{
-				max_count = bin_count[current_bin];
-				max_bin_index = current_bin;
-			}
-		}
 
-		// remarks - can check for Nan
-		// can construct histogram without sorting
+			// remarks - can check for Nan
+			// can construct histogram without sorting
 		
-		// print histogram
-		std::printf("Histogram \n");
-		std::printf("%i bins\n", num_bins);
-		for(int i = 0; i < num_bins; i++)
-		{
-			double distance = i * bin_width;
-			std::printf("distance: %f, count %i \n", distance, bin_count[i]);
+			// print histogram
+			std::printf("Histogram \n");
+			for(int i = 0; i < num_bins; i++)
+			{
+				double distance = i * bin_width + min;
+				std::printf("distance: %f, count %i \n", distance, bin_count[i]);
+			}
+			//		 		
+			
+			/*int start = bin_indexes[max_bin_index];
+			int end = bin_indexes[max_bin_index + 1];
+			double average_of_bin_values = 0;
+			int total = end - start;
+			for(int i = start; i < end; i++)
+			{
+				average_of_bin_values += distances[i];
+			}
+			*/
+			// winning_distance = average_of_bin_values / total;
+			winning_distance = distances[bin_indexes[max_bin_index]];
+			prev_range = winning_distance;
+			std::printf("Winning distance: %f \n",winning_distance);
+
+			average_distance /= count;
+			average_latitude /= count;
 		}
-		//		 		
-		double winning_distance = max_bin_index * bin_width + bin_width/2;
-		std::printf("Winning distance: %f \n",winning_distance);		
-		/*int start = bin_indexes[max_bin_index];
-		int end = bin_indexes[max_bin_index + 1];
-		double average_of_bin_values = 0;
-		int total = end - start;
-		for(int i = start; i < end; i++)
-		{
-			average_of_bin_values += distances[i];
-		}
-	  */
-		average_distance /= count;
-		average_latitude /= count;
 		if(frame_detected)
 		{
 			////ROS_INFO("Number of matching points: %i", count); 
@@ -258,7 +271,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		//old_range = average_distance;
 		////ROS_INFO("Range(%f) Range Rate (%f)",average_distance,range_rate);
 		std_msgs::Float32 dist_msg;
-		dist_msg.data = average_distance;
+		dist_msg.data = winning_distance;
 		distancePub.publish(dist_msg);
     // 
   } else {
