@@ -1,5 +1,6 @@
 #include <ros/ros.h>
 #include <geometry_msgs/Pose2D.h>
+#include <geometry_msgs/PointStamped.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
 // ROS specific includes
@@ -50,6 +51,7 @@ double prev_range = 100;
 ros::Publisher pub;
 ros::Publisher pub_2;
 ros::Publisher distancePub;
+ros::Publisher pointPublisher;
 
 //camera objects
 image_transport::Publisher range_image_pub;
@@ -57,12 +59,12 @@ image_geometry::PinholeCameraModel cam_model_;
 sensor_msgs::CameraInfo camera_info_msg;
 
 //point cloud objects
-pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
-pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered (new pcl::PointCloud<pcl::PointXYZ>);
+pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
+pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered (new pcl::PointCloud<pcl::PointXYZRGB>);
 
 // point cloud filtering obects
-pcl::PassThrough<pcl::PointXYZ> pass;
-pcl::VoxelGrid<pcl::PointXYZ> sor;
+pcl::PassThrough<pcl::PointXYZRGB> pass;
+pcl::VoxelGrid<pcl::PointXYZRGB> sor;
 Eigen::Affine3f transform_2 = Eigen::Affine3f::Identity(); // Matrix transform from camera pose -> lidar pose
 
 // range pixels 
@@ -70,7 +72,7 @@ cv::Mat range_pixels; // (2d array of ranges)
 cv::Mat range_gray_pixels;// (2d array, with ranges mapped between 0 - 255, greyscale - for visualization purposes)
 cv::Mat range_rgb_pixels;// (3d array, with range from 0-255 mapped to rgb color - for visualization purposes)
 
-void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
+void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered)
 {
 	pass.setInputCloud (cloud);
   pass.setFilterFieldName ("z");
@@ -83,14 +85,14 @@ void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::Po
 	pass.filter(*cloud_filtered);
 }
 
-void downsample(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
+void downsample(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered)
 {
   sor.setInputCloud (cloud);
   sor.setLeafSize (0.03f, 0.03f, 0.03f);
   sor.filter (*cloud_filtered);
 }
 
-float calculate_distance(pcl::PointXYZ p1, pcl::PointXYZ p2)
+float calculate_distance(pcl::PointXYZRGB p1, pcl::PointXYZRGB p2)
 {
 	float dx = p1.x - p2.x;
 	float dy = p1.y - p2.y;
@@ -135,7 +137,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		double lidar_elevation = lidar_z / lidar_x;
 		double lidar_bearing = lidar_y / lidar_x;
 		////ROS_INFO("Ray Elevation, Bearing (lidar coord): (%f,%f)",lidar_elevation,lidar_bearing);
-		pcl::PointXYZ origin(0,0,0);
+		pcl::PointXYZRGB origin(0,0,0);
 		
 		int count = 0;
 		double average_distance = 0;
@@ -273,6 +275,13 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		std_msgs::Float32 dist_msg;
 		dist_msg.data = winning_distance;
 		distancePub.publish(dist_msg);
+		
+		geometry_msgs::PointStamped estimated_point;
+		estimated_point.point.x = winning_distance;
+		estimated_point.point.y = lidar_bearing * winning_distance;
+		estimated_point.point.z = lidar_elevation * winning_distance;		
+		pointPublisher.publish(estimated_point);
+		
     // 
   } else {
     //ROS_INFO("Camera model not initialized");
@@ -341,7 +350,7 @@ int main (int argc, char** argv)
 	ros::Subscriber frame_detected_sub = nh.subscribe("/darknet_ros/frame_detected",1,frame_detected_cb);
   
 	distancePub = nh.advertise<std_msgs::Float32>("/darknet_ros/distance",1);
-		
+	pointPublisher = nh.advertise<geometry_msgs::PointStamped>("/lidar_ranging/range_point",1); 	
 	// Spin
   ros::spin ();
 }
