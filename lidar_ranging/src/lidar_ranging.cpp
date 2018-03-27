@@ -105,10 +105,13 @@ float calculate_distance(pcl::PointXYZRGB p1, pcl::PointXYZRGB p2)
 	return std::sqrt(dx*dx + dy*dy + dz*dz);
 }
 
-int get_list_of_distances(std::vector<double>& distances, std::vector<double>& latitudes, 
+int get_list_of_distances(std::vector<double> &distances_out, std::vector<double>& latitudes, 
 													pcl::PointXYZRGB origin, double lidar_elevation, double lidar_bearing, 
 													pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered)
 {
+	std::vector<double> distances_1deg(0);
+	std::vector<double> distances_2deg(0);
+	std::vector<double> distances_5deg(0);
 	int count = 0;
 	int num_points = cloud_filtered->points.size();
 	for(int i = 0; i < num_points; i++)
@@ -128,19 +131,23 @@ int get_list_of_distances(std::vector<double>& distances, std::vector<double>& l
 		double tolerance = 0.0174533;
 		if(distance <= 20)
 		{
-			tolerance *=2;
+			tolerance = 0.034;
+		}
+		if(distance <=10)
+		{
+			tolerance = 0.0873;
 		}
 		if(elevation_diff <= tolerance && bearing_diff <= tolerance && distance > 0.01)
 		{
-			distances.push_back(distance);
+			distances_1deg.push_back(distance);
 			latitudes.push_back(y);
 			count++;
 		}
   }
 	// generate sorted list of points
-	std::sort (distances.begin(), distances.end());
+	std::sort (distances_1deg.begin(), distances_1deg.end());
 	std::sort (latitudes.begin(), latitudes.end());
-
+	distances_out = distances_1deg;
 	// print distances
 	/*std::printf("sorted distance list \n");
 	std::printf("%i points\n", count);
@@ -151,14 +158,14 @@ int get_list_of_distances(std::vector<double>& distances, std::vector<double>& l
 	return count;
 }
 
-int estimate_distance_from_histogram(std::vector<double>& distances)
+double estimate_distance_from_histogram(std::vector<double>& distances)
 {
 	double min_distance = 0;
 	double max_distance = 100;
 	double bin_width = 1;
 	int num_bins = (max_distance - min_distance) / bin_width + 1;	
 	std::vector<int> bin_count(num_bins);
-	std::vector<int> bin_averages(num_bins);
+	std::vector<double> bin_averages(num_bins);
 
 	for (int i = 0; i < distances.size(); i++)
 	{
@@ -171,7 +178,7 @@ int estimate_distance_from_histogram(std::vector<double>& distances)
 	{
 		if(bin_count[i] > 0)
 		{
-			bin_averages[i]/= bin_count[i];
+			bin_averages[i] /= double(bin_count[i]);
 		}
 	}
 	int winning_index = 0;
@@ -208,7 +215,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	apply_passthrough_filter(cloud, cloud_filtered);
 	
   // Downsampling
-  downsample(cloud_filtered, cloud_filtered);
+  //downsample(cloud_filtered, cloud_filtered);
   
   // Matrix transformation
   pcl::transformPointCloud (*cloud_filtered, *cloud_filtered, transform_2);  
@@ -237,6 +244,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
   // iterate through point cloud by index
 	std::vector<double> distances(0);
 	std::vector<double> latitudes(0);
+
 	int count = get_list_of_distances(distances, latitudes, origin,lidar_elevation, lidar_bearing, cloud_filtered);
 	
 	double winning_distance = prev_range;
@@ -268,8 +276,11 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 void frame_cb(const geometry_msgs::Pose2D& pose_msg)
 {
 	//frame_detected = true;
-	frame_center_X = pose_msg.x;
-	frame_center_Y = pose_msg.y;
+	if(frame_detected)
+	{
+		frame_center_X = pose_msg.x;
+		frame_center_Y = pose_msg.y;
+	}
 }
 
 void frame_detected_cb(const std_msgs::Bool& frame_detected_msg)
