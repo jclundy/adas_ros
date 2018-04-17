@@ -122,14 +122,29 @@ float calculate_distance(pcl::PointXYZ p1, pcl::PointXYZ p2)
 	return std::sqrt(dx*dx + dy*dy + dz*dz);
 }
 
+void copy(std::vector<double> &out, std::vector<double> &in)
+{
+	for(int i = 0; i < in.size(); i++)
+	{
+			out.push_back(in[i]);
+	}
+}
+
+
 int get_list_of_distances(std::vector<double> &distances_out, std::vector<double>& latitudes, 
 													pcl::PointXYZ origin, double lidar_elevation, double lidar_bearing, 
 													pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
 {
 	std::vector<double> distances_1deg(0);
+	distances_1deg.reserve(200);
 	std::vector<double> distances_2deg(0);
+	distances_2deg.reserve(200);
 	std::vector<double> distances_5deg(0);
-	int count = 0;
+	distances_5deg.reserve(200);
+	
+	int count_1deg = 0;
+	int count_2deg = 0;
+	int count_5deg = 0;
 	int num_points = cloud_filtered->points.size();
 	for(int i = 0; i < num_points; i++)
   {	
@@ -145,26 +160,46 @@ int get_list_of_distances(std::vector<double> &distances_out, std::vector<double
 		double elevation_diff = std::abs(lidar_elevation - point_elevation);
 		double bearing_diff = std::abs(lidar_bearing - point_bearing);
 		
-		double tolerance = 0.0174533;
-		if(distance <= 20)
-		{
-			tolerance = 0.034;
-		}
-		if(distance <=10)
-		{
-			tolerance = 0.0873;
-		}
-		if(elevation_diff <= tolerance && bearing_diff <= tolerance && distance > 0.01)
+		double tolerance_1deg = 0.0174533;
+		double tolerance_2deg = 0.035;
+		double tolerance_5deg = 0.0873;
+
+		if(bearing_diff <= tolerance_1deg && distance > 0.01)
 		{
 			distances_1deg.push_back(distance);
 			latitudes.push_back(y);
-			count++;
+			count_1deg++;
+		} else if(bearing_diff <= tolerance_2deg && distance > 0.01) {
+			distances_2deg.push_back(distance);
+			latitudes.push_back(y);
+			count_2deg++;
+		} else if(bearing_diff <= tolerance_5deg && distance > 0.01) {
+			distances_5deg.push_back(distance);
+			latitudes.push_back(y);
+			count_5deg++;
 		}
   }
 	// generate sorted list of points
-	std::sort (distances_1deg.begin(), distances_1deg.end());
-	std::sort (latitudes.begin(), latitudes.end());
-	distances_out = distances_1deg;
+	int count = 0;
+	if(count_1deg > 0) {
+		copy(distances_out, distances_1deg);
+		count = count_1deg;
+		if(frame_has_appeared) std::printf("1 deg list");
+	} else if (count_2deg > 0) {
+		copy(distances_out, distances_2deg);
+		count = count_2deg;
+		if(frame_has_appeared) std::printf("2 deg list");
+	} else {
+		copy(distances_out, distances_5deg);
+		count = count_5deg;
+		if(frame_has_appeared)std::printf("5 deg list");
+	}
+
+	/*if(count > 0)
+	{
+		std::sort (distances_out.begin(), distances_out.end());
+		std::sort (latitudes.begin(), latitudes.end());
+	}*/
 	// print distances
 	/*std::printf("sorted distance list \n");
 	std::printf("%i points\n", count);
