@@ -33,7 +33,7 @@ signal_t adas_signal_defs[adas_signal_count] = {
 	{
 		10,
 		2,
-		true,
+		false,
 		true,
 		1,
 		0
@@ -65,7 +65,7 @@ signal_t adas_signal_defs[adas_signal_count] = {
 	{
 		42,
 		2,
-		true,
+		false,
 		true,
 		1,
 		0
@@ -89,7 +89,7 @@ signal_t adas_signal_defs[adas_signal_count] = {
 	{
 		57,
 		7,
-		true,
+		false,
 		true,
 		1,
 		0
