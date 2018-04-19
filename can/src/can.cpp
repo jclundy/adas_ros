@@ -38,7 +38,7 @@ ros::Publisher veh_speed_pub;
 
 void inthand(int signum)
 {
-    stop = 1;
+  stop = 1;
 }
 
 void assign_values_to_publisher(void)
@@ -48,96 +48,97 @@ void assign_values_to_publisher(void)
 
 int open_port(const char *port)
 {
-    struct ifreq ifr;
-    struct sockaddr_can addr;
+  struct ifreq ifr;
+  struct sockaddr_can addr;
 
-    /* open socket */
-    soc = socket(PF_CAN, SOCK_RAW, CAN_RAW);
-    if(soc < 0)
-    {
+  /* open socket */
+  soc = socket(PF_CAN, SOCK_RAW, CAN_RAW);
+  if(soc < 0)
+  {
 		printf("Fail to open socket");
-        return -1;
-    }
+    return -1;
+  }
 
-    addr.can_family = AF_CAN;
-    strcpy(ifr.ifr_name, port);
+  addr.can_family = AF_CAN;
+  strcpy(ifr.ifr_name, port);
 
-    if (ioctl(soc, SIOCGIFINDEX, &ifr) < 0)
-    {
+  if (ioctl(soc, SIOCGIFINDEX, &ifr) < 0)
+  {
 		printf("Fail ioctl");
-        return -1;
-    }
+    return -1;
+  }
 
-    addr.can_ifindex = ifr.ifr_ifindex;
+  addr.can_ifindex = ifr.ifr_ifindex;
 
-    fcntl(soc, F_SETFL, O_NONBLOCK);
+  fcntl(soc, F_SETFL, O_NONBLOCK);
 
-    if (bind(soc, (struct sockaddr *)&addr, sizeof(addr)) < 0)
-    {
+  if (bind(soc, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+  {
 		printf("Fail to bind socket to interface");
-        return -1;
-    }
+    return -1;
+  }
 
-    return 0;
+  return 0;
 }
 
 int send_port(char *payload)
 {
-    int retval;
-    struct can_frame frame = {
-    	.can_id = 0x460 + adas_signal_values[obj_id],
-    	.can_dlc = 8,
-    	.__pad = 0,
-    	.__res0 = 0,
-    	.__res1 = 0,
-    	.data = {
-    		payload[0],
-    		payload[1],
-    		payload[2],
-    		payload[3],
-    		payload[4],
-    		payload[5],
-    		payload[6],
-    		payload[7]
-    	}
-    };
-   	retval = write(soc, &frame, sizeof(struct can_frame));
-    if (retval != sizeof(struct can_frame))
-    {
-        return -1;
-    }
-    else
-    {
-        return 0;
-    }
+  int retval;
+  struct can_frame frame = {
+  	.can_id = 0x461,
+  	.can_dlc = 8,
+  	.__pad = 0,
+  	.__res0 = 0,
+  	.__res1 = 0,
+  	.data = {
+  		payload[0],
+  		payload[1],
+  		payload[2],
+  		payload[3],
+  		payload[4],
+  		payload[5],
+  		payload[6],
+  		payload[7]
+  	}
+  };
+ 	retval = write(soc, &frame, sizeof(struct can_frame));
+  if (retval != sizeof(struct can_frame))
+  {
+    return -1;
+  }
+  else
+  {
+    return 0;
+  }
 }
 
 void compose_can_signal(int signal_enum, double physical_value, char *data)
 {
-	int raw_value = (physical_value / adas_signal_defs[signal_enum].scaling) - adas_signal_defs[signal_enum].offset;
+	int raw_value = (physical_value - adas_signal_defs[signal_enum].offset) / adas_signal_defs[signal_enum].scaling;
 	int total_bytes = ceil(adas_signal_defs[signal_enum].bit_length / 8.0);
 	int start_byte = floor(adas_signal_defs[signal_enum].start_bit / 8.0);
-
-	int sign_bit = 0;
-	if(adas_signal_defs[signal_enum].is_signed)
-	{
-		if(physical_value < 0)
-		{
-			sign_bit = 1;
-			raw_value *= -1;
-		}
-		raw_value <<= 1;
-		raw_value |= sign_bit;
-	}
+	
+	raw_value <<= (adas_signal_defs[signal_enum].start_bit % 8);
 	
 	int byte = 0;
-	int payload[8];
-	for(int i = 0; i < total_bytes; i++)
+	int payload[2];
+	for(int i = 0; i < (total_bytes-1); i++)
 	{
 		byte = raw_value & 0b11111111;
 		raw_value >>= 8;
 		payload[i] = byte;
 	}
+	
+	int bits_in_ms_byte = adas_signal_defs[signal_enum].bit_length - ((8-(adas_signal_defs[signal_enum].start_bit % 8)) + (total_bytes-2)*8);
+	int mask = 0b1;
+	for(int n = 0; n < (bits_in_ms_byte-1); n++)
+	{
+   		mask <<= 1;
+    	mask |= 1;
+	}
+	raw_value &= mask;
+	byte = raw_value & 0b11111111;
+	payload[total_bytes-1] = byte;
 	
 	int i = start_byte;
 	int j = 0;
@@ -155,9 +156,9 @@ void compose_can_signal(int signal_enum, double physical_value, char *data)
 void write_can_adas_signals(void)
 {
 	char payload[8] = {};
-	char signal_data[8] = {};
 	for(int i = 0; i < adas_signal_count; i++)
 	{
+		char signal_data[8] = {};
 		compose_can_signal(i, adas_signal_values[i], signal_data);
 		for(int j = 0; j < 8; j++)
 		{
@@ -191,9 +192,13 @@ void parse_messages(struct can_frame frame)
 				i++;
 			}
 			payload[0] >>= (gmhs_signal_defs[signal].start_bit % 8);
-			int num = gmhs_signal_defs[signal].bit_length - ((8-(gmhs_signal_defs[signal].start_bit % 8)) + (total_bytes-2)*8);
+			int bits_in_ms_byte = gmhs_signal_defs[signal].bit_length - ((8-(gmhs_signal_defs[signal].start_bit % 8)) + (total_bytes-2)*8);
+	   		if((total_bytes == 1) && (gmhs_signal_defs[signal].start_bit % 8 != 0))
+	   		{
+	   			bits_in_ms_byte -= gmhs_signal_defs[signal].start_bit % 8;
+	   		}
 	   		int mask = 0b1;
-			for(int n = 0; n < (num-1); n++)
+			for(int n = 0; n < (bits_in_ms_byte-1); n++)
 			{
 		   		mask <<= 1;
 		    	mask |= 1;
@@ -209,8 +214,11 @@ void parse_messages(struct can_frame frame)
 			int sign = 1;
 			if(gmhs_signal_defs[signal].is_signed)
 			{
-				sign = ((physical_value & 1) == 1) ? -1 : 1;
-				physical_value >>= 1;
+				sign = ((payload[total_bytes-1] >> (bits_in_ms_byte-1)) == 1) ? -1 : 1;
+				if(sign == -1)
+				{
+					physical_value = ~(physical_value - 1) & 0b11111111;
+				}
 			}
 			
 			gmhs_signal_values[signal] = sign * ((physical_value * gmhs_signal_defs[signal].scaling) + gmhs_signal_defs[signal].offset);
