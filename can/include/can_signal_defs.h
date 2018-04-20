@@ -108,10 +108,6 @@ signal_t gmhs_signal_defs[gmhs_signal_count] = {
 	}
 };
 
-struct {
-	int obj_track1 = 0x441;
-	int obj_track2 = 0x442;
-	int obj_track3 = 0x443;
-} adas_msg_ids;
+int adas_msg_ids[3] = {0x441, 0x442, 0x443};
 
 

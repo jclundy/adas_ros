@@ -336,7 +336,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		
 		if(lateral_range < -2)
 			lane_msg.data = -1;
-		if(lateral_range > 2)
+		else if(lateral_range > 2)
 			lane_msg.data = 1;
 		relative_lane_pub.publish(lane_msg);
 		

@@ -27,6 +27,32 @@ static int soc;
 static struct can_frame frame_rd;
 static int recvbytes = 0;
 
+typedef struct
+{
+	int can_id;
+	int obj_id;
+	bool has_range;
+	unsigned int range;
+} posted_can_msg_t;
+
+posted_can_msg_t vehicles[3] = {
+	{
+		.can_id = adas_msg_ids[0],
+		.obj_id = 0,
+		.has_range = false
+	},
+	{
+		.can_id = adas_msg_ids[1],
+		.obj_id = 0,
+		.has_range = false
+	},
+	{
+		.can_id = adas_msg_ids[2],
+		.obj_id = 0,
+		.has_range = false
+	}
+};
+
 double adas_signal_values[adas_signal_count] = {};
 double gmhs_signal_values[gmhs_signal_count] = {};
 
@@ -39,6 +65,50 @@ ros::Publisher veh_speed_pub;
 void inthand(int signum)
 {
   stop = 1;
+}
+
+int select_can_id(void)
+{
+	int id = 0;
+	unsigned int max_range_idx = 0;
+	
+	// if object id exists on CAN, select corresponding CAN id
+	for(int i = 0; i < sizeof(adas_msg_ids)/sizeof(adas_msg_ids[0]); i++)
+	{
+		if(adas_signal_values[obj_id] == vehicles[i].obj_id)
+		{
+			id = vehicles[i].can_id;
+			goto fcn_exit;
+		}
+	}
+	
+	// select CAN id that has no data, if any (precedence: low id to high id)
+	for(int i = 0; i < sizeof(adas_msg_ids)/sizeof(adas_msg_ids[0]); i++)
+	{
+		if(!vehicles[i].has_range)
+		{
+			id = vehicles[i].can_id;
+			goto fcn_exit;
+		}
+	}
+	
+	// find CAN id with furthest vehicle
+	for(int i = 1; i < sizeof(adas_msg_ids)/sizeof(adas_msg_ids[0]); i++)
+	{
+		if(vehicles[i].range > vehicles[max_range_idx].range)
+		{
+			max_range_idx = i;
+		}
+	}
+	// if current vehicle is closer than the furthest, select CAN id of furthest
+	if(adas_signal_values[long_range] < vehicles[max_range_idx].range)
+	{
+		id = vehicles[max_range_idx].can_id;
+	}
+	
+	fcn_exit:
+	
+	return id;
 }
 
 void assign_values_to_publisher(void)
@@ -85,7 +155,7 @@ int send_port(char *payload)
 {
   int retval;
   struct can_frame frame = {
-  	.can_id = 0x461,
+  	.can_id = select_can_id(),
   	.can_dlc = 8,
   	.__pad = 0,
   	.__res0 = 0,
@@ -133,8 +203,8 @@ void compose_can_signal(int signal_enum, double physical_value, char *data)
 	int mask = 0b1;
 	for(int n = 0; n < (bits_in_ms_byte-1); n++)
 	{
-   		mask <<= 1;
-    	mask |= 1;
+ 		mask <<= 1;
+  	mask |= 1;
 	}
 	raw_value &= mask;
 	byte = raw_value & 0b11111111;
@@ -192,16 +262,18 @@ void parse_messages(struct can_frame frame)
 				i++;
 			}
 			payload[0] >>= (gmhs_signal_defs[signal].start_bit % 8);
+			
 			int bits_in_ms_byte = gmhs_signal_defs[signal].bit_length - ((8-(gmhs_signal_defs[signal].start_bit % 8)) + (total_bytes-2)*8);
-	   		if((total_bytes == 1) && (gmhs_signal_defs[signal].start_bit % 8 != 0))
-	   		{
-	   			bits_in_ms_byte -= gmhs_signal_defs[signal].start_bit % 8;
-	   		}
-	   		int mask = 0b1;
+   		if((total_bytes == 1) && (gmhs_signal_defs[signal].start_bit % 8 != 0))
+   		{
+   			bits_in_ms_byte -= gmhs_signal_defs[signal].start_bit % 8;
+   		}
+   		
+   		int mask = 0b1;
 			for(int n = 0; n < (bits_in_ms_byte-1); n++)
 			{
-		   		mask <<= 1;
-		    	mask |= 1;
+	   		mask <<= 1;
+	    	mask |= 1;
 			}
 			payload[total_bytes-1] &= mask;
 		
@@ -211,6 +283,7 @@ void parse_messages(struct can_frame frame)
 				physical_value <<= 8;
 				physical_value |= payload[p];
 			}
+			
 			int sign = 1;
 			if(gmhs_signal_defs[signal].is_signed)
 			{
@@ -240,7 +313,7 @@ void read_port()
 			recvbytes = read(soc, &frame_rd, sizeof(struct can_frame));
 			if(recvbytes)
 			{
-		  		parse_messages(frame_rd);
+				parse_messages(frame_rd);
 				assign_values_to_publisher();
 			}
 		}
@@ -282,7 +355,7 @@ void brake_light_cb(const std_msgs::Int32& info_msg)
 	adas_signal_values[brake_light] = info_msg.data;
 }
 
-void obj_age_cb(const std_msgs::Float32& info_msg)
+void obj_age_cb(const std_msgs::Int32& info_msg)
 {
 	adas_signal_values[obj_age] = info_msg.data;
 }
@@ -312,9 +385,9 @@ int main(int argc, char** argv)
 	{
 		read_port();
 		veh_speed_pub.publish(veh_speed_msg);
-
+		
 		ros::spinOnce();
-	
+		
 		write_can_adas_signals();
 	}
 }
