@@ -332,12 +332,12 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		
 		// hacky lane detection
 		std_msgs::Int32 lane_msg;
-		lane_msg.data = 0;
+		lane_msg.data = 2;
 		
 		if(lateral_range < -2)
-			lane_msg.data = -1;
-		else if(lateral_range > 2)
 			lane_msg.data = 1;
+		else if(lateral_range > 2)
+			lane_msg.data = 3;
 		relative_lane_pub.publish(lane_msg);
 		
 	}
