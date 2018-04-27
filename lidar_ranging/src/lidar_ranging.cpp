@@ -40,6 +40,7 @@ int frame_center_Y = 150;
 bool frame_detected = false;
 int no_detection_count = 0;
 double previous_distance = 0;
+bool frame_has_appeared = false;
 
 double old_range = 0;
 double range_rate = 0;
@@ -105,10 +106,13 @@ float calculate_distance(pcl::PointXYZRGB p1, pcl::PointXYZRGB p2)
 	return std::sqrt(dx*dx + dy*dy + dz*dz);
 }
 
-int get_list_of_distances(std::vector<double>& distances, std::vector<double>& latitudes, 
+int get_list_of_distances(std::vector<double> &distances_out, std::vector<double>& latitudes, 
 													pcl::PointXYZRGB origin, double lidar_elevation, double lidar_bearing, 
 													pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered)
 {
+	std::vector<double> distances_1deg(0);
+	std::vector<double> distances_2deg(0);
+	std::vector<double> distances_5deg(0);
 	int count = 0;
 	int num_points = cloud_filtered->points.size();
 	for(int i = 0; i < num_points; i++)
@@ -128,19 +132,23 @@ int get_list_of_distances(std::vector<double>& distances, std::vector<double>& l
 		double tolerance = 0.0174533;
 		if(distance <= 20)
 		{
-			tolerance *=2;
+			tolerance = 0.034;
+		}
+		if(distance <=10)
+		{
+			tolerance = 0.0873;
 		}
 		if(elevation_diff <= tolerance && bearing_diff <= tolerance && distance > 0.01)
 		{
-			distances.push_back(distance);
+			distances_1deg.push_back(distance);
 			latitudes.push_back(y);
 			count++;
 		}
   }
 	// generate sorted list of points
-	std::sort (distances.begin(), distances.end());
+	std::sort (distances_1deg.begin(), distances_1deg.end());
 	std::sort (latitudes.begin(), latitudes.end());
-
+	distances_out = distances_1deg;
 	// print distances
 	/*std::printf("sorted distance list \n");
 	std::printf("%i points\n", count);
@@ -151,14 +159,14 @@ int get_list_of_distances(std::vector<double>& distances, std::vector<double>& l
 	return count;
 }
 
-int estimate_distance_from_histogram(std::vector<double>& distances)
+double estimate_distance_from_histogram(std::vector<double>& distances)
 {
 	double min_distance = 0;
 	double max_distance = 100;
 	double bin_width = 1;
 	int num_bins = (max_distance - min_distance) / bin_width + 1;	
 	std::vector<int> bin_count(num_bins);
-	std::vector<int> bin_averages(num_bins);
+	std::vector<double> bin_averages(num_bins);
 
 	for (int i = 0; i < distances.size(); i++)
 	{
@@ -171,7 +179,7 @@ int estimate_distance_from_histogram(std::vector<double>& distances)
 	{
 		if(bin_count[i] > 0)
 		{
-			bin_averages[i]/= bin_count[i];
+			bin_averages[i] /= double(bin_count[i]);
 		}
 	}
 	int winning_index = 0;
@@ -208,7 +216,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	apply_passthrough_filter(cloud, cloud_filtered);
 	
   // Downsampling
-  downsample(cloud_filtered, cloud_filtered);
+  //downsample(cloud_filtered, cloud_filtered);
   
   // Matrix transformation
   pcl::transformPointCloud (*cloud_filtered, *cloud_filtered, transform_2);  
@@ -237,6 +245,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
   // iterate through point cloud by index
 	std::vector<double> distances(0);
 	std::vector<double> latitudes(0);
+
 	int count = get_list_of_distances(distances, latitudes, origin,lidar_elevation, lidar_bearing, cloud_filtered);
 	
 	double winning_distance = prev_range;
@@ -244,32 +253,39 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	{
 		winning_distance = estimate_distance_from_histogram(distances);
 		prev_range = winning_distance;
-	}	
-	std::printf("winning_distance: %f \t", winning_distance);
-	std::printf("count: %i \t", count);
-	std::printf("camera x,y : (%i , %i) \n", frame_center_X, frame_center_Y);
+	}
+	if(frame_has_appeared)
+	{
+		std::printf("winning_distance: %f \t", winning_distance);
+		std::printf("count: %i \t", count);
+		std::printf("camera x,y : (%i , %i) \n", frame_center_X, frame_center_Y);
+		std_msgs::Float32 dist_msg;
+		dist_msg.data = winning_distance;
+		distancePub.publish(dist_msg);
+	
+		geometry_msgs::PointStamped estimated_point;
+		estimated_point.point.x = winning_distance;
+		estimated_point.point.y = lidar_bearing * winning_distance;
+		estimated_point.point.z = lidar_elevation * winning_distance;		
+		pointPublisher.publish(estimated_point);
+	}
 	/*if(!std::isnan(average_distance) && !std::isnan(old_range))
 	{
 		range_rate = (old_range - average_distance) * 10 + prev_range_rate / 2;
 	} else {
 		range_rate = std::nan("100");
 	}	*/
-	std_msgs::Float32 dist_msg;
-	dist_msg.data = winning_distance;
-	distancePub.publish(dist_msg);
 	
-	geometry_msgs::PointStamped estimated_point;
-	estimated_point.point.x = winning_distance;
-	estimated_point.point.y = lidar_bearing * winning_distance;
-	estimated_point.point.z = lidar_elevation * winning_distance;		
-	pointPublisher.publish(estimated_point);
 }
 
 void frame_cb(const geometry_msgs::Pose2D& pose_msg)
 {
 	//frame_detected = true;
-	frame_center_X = pose_msg.x;
-	frame_center_Y = pose_msg.y;
+	if(frame_detected)
+	{
+		frame_center_X = pose_msg.x;
+		frame_center_Y = pose_msg.y;
+	}
 }
 
 void frame_detected_cb(const std_msgs::Bool& frame_detected_msg)
@@ -277,6 +293,7 @@ void frame_detected_cb(const std_msgs::Bool& frame_detected_msg)
 	if(frame_detected_msg.data)
 	{
 		frame_detected = true;
+		frame_has_appeared = true;
 	} else {
 		no_detection_count++;
 		if(no_detection_count > 40)
