@@ -48,6 +48,10 @@ double prev_range_rate = 0;
 
 double prev_range = 100;
 
+pcl::PointXYZRGB camera_position(-1.872,0.0,0.655);
+pcl::PointXYZRGB origin(0.0,0.0,0.0);
+double rotation_y = 0.17// in radians - 10 degrees
+
 //publishers
 ros::Publisher pub;
 ros::Publisher pub_2;
@@ -76,13 +80,13 @@ cv::Mat range_rgb_pixels;// (3d array, with range from 0-255 mapped to rgb color
 void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered)
 {
 	pass.setInputCloud (cloud);
-  pass.setFilterFieldName ("z");
-  pass.setFilterLimits (-10, 10);
+  	pass.setFilterFieldName ("z");
+  	pass.setFilterLimits (-10, 10);
 	pass.filter(*cloud_filtered);
 	
 	pass.setInputCloud (cloud);
-  pass.setFilterFieldName ("x");
-  pass.setFilterLimits (0, 100);
+  	pass.setFilterFieldName ("x");
+  	pass.setFilterLimits (0, 100);
 	pass.filter(*cloud_filtered);
 
 	pass.setInputCloud(cloud_filtered);
@@ -107,7 +111,7 @@ float calculate_distance(pcl::PointXYZRGB p1, pcl::PointXYZRGB p2)
 }
 
 int get_list_of_distances(std::vector<double> &distances_out, std::vector<double>& latitudes, 
-													pcl::PointXYZRGB origin, double lidar_elevation, double lidar_bearing, 
+													pcl::PointXYZRGB camera_position, pcl::PointXYZRGB origin, double ray_elevation, double ray_bearing, 
 													pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered)
 {
 	std::vector<double> distances_1deg(0);
@@ -121,13 +125,18 @@ int get_list_of_distances(std::vector<double> &distances_out, std::vector<double
 		float x = cloud_filtered->points[i].x;
 		float y = cloud_filtered->points[i].y;
 		float z = cloud_filtered->points[i].z;
-		double point_elevation = z / x;
-		double point_bearing = y / x;
 		
-    double distance = calculate_distance(cloud_filtered->points[i], origin);
+		double dx = x - camera_position.x;
+		double dy = y - camera_position.y;
+		double dz = z - camera_position.z;
+
+		double point_elevation = dz / dx;
+		double point_bearing = dy / dx;
 		
-		double elevation_diff = std::abs(lidar_elevation - point_elevation);
-		double bearing_diff = std::abs(lidar_bearing - point_bearing);
+    	double distance = calculate_distance(cloud_filtered->points[i], origin);
+		
+		double elevation_diff = std::abs(ray_elevation - point_elevation);
+		double bearing_diff = std::abs(ray_bearing - point_bearing);
 		
 		double tolerance = 0.0174533;
 		if(distance <= 20)
@@ -210,44 +219,43 @@ double estimate_distance_from_histogram(std::vector<double>& distances)
 void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 {
 	// Convert message to pcl::PointCloud type
-  pcl::fromROSMsg (*input, *cloud);
+  	pcl::fromROSMsg (*input, *cloud);
 	
-  // Apply passthrough filter
+  	// Apply passthrough filter
 	apply_passthrough_filter(cloud, cloud_filtered);
 	
-  // Downsampling
-  //downsample(cloud_filtered, cloud_filtered);
+  	// Downsampling
+  	//downsample(cloud_filtered, cloud_filtered);
   
-  // Matrix transformation
-  pcl::transformPointCloud (*cloud_filtered, *cloud_filtered, transform_2);  
+  	// Matrix transformation
+  	//pcl::transformPointCloud (*cloud_filtered, *cloud_filtered, transform_2);  
   
 	// Publish point cloud
-  sensor_msgs::PointCloud2 output;
+  	sensor_msgs::PointCloud2 output;
 	pcl::toROSMsg(*cloud_filtered, output);
-  pub.publish (output);
+  	pub.publish (output);
 	
 	if(!cam_model_.initialized()) return;
 	
 	cv::Point2d frame_center = cv::Point2d(frame_center_X, frame_center_Y);
 	cv::Point3d ray = cam_model_.projectPixelTo3dRay(frame_center);
-	double ray_x = ray.x;
-	double ray_y = ray.y;
-	double ray_z = ray.z;
 
-	double lidar_x = ray_z;
-	double lidar_z = ray.y;
-	double lidar_y = ray.x;
+	double ray_world_x = ray.z;
+	double ray_world_z = ray.y;
+	double ray_world_y = ray.x;
+	// apply rotation
+	double rotated_ray_x = std::cos(theta_y)*ray_world_x + std::sin(theta_y)*ray_world_z;
+	double rotated_ray_z = -std::sin(theta_y)*ray_world_x + std::cos(theta_y)*ray_world_z;
+	double rotated_ray_y = ray_world_y;
 
-	double lidar_elevation = lidar_z / lidar_x;
-	double lidar_bearing = lidar_y / lidar_x;
-	pcl::PointXYZRGB origin(0,0,0);
+	double lidar_elevation = rotated_ray_z / rotated_ray_x;
+	double lidar_bearing = rotated_ray_y / rotated_ray_x;
 		
   // iterate through point cloud by index
 	std::vector<double> distances(0);
 	std::vector<double> latitudes(0);
 
-	int count = get_list_of_distances(distances, latitudes, origin,lidar_elevation, lidar_bearing, cloud_filtered);
-	
+	int count = get_list_of_distances(distances, latitudes, camera_position, origin, lidar_elevation, lidar_bearing, cloud_filtered);
 	double winning_distance = prev_range;
 	if(count > 0) 
 	{
@@ -264,9 +272,9 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 		distancePub.publish(dist_msg);
 	
 		geometry_msgs::PointStamped estimated_point;
-		estimated_point.point.x = winning_distance;
-		estimated_point.point.y = lidar_bearing * winning_distance;
-		estimated_point.point.z = lidar_elevation * winning_distance;		
+		estimated_point.point.x = winning_distance * std::cos(lidar_bearing) * std::cos(lidar_elevation);
+		estimated_point.point.y = std::cos(lidar_elevation)*std::sin(lidar_bearing) * winning_distance;
+		estimated_point.point.z = std::sin(lidar_elevation)*winning_distance;		
 		pointPublisher.publish(estimated_point);
 	}
 	/*if(!std::isnan(average_distance) && !std::isnan(old_range))
@@ -325,11 +333,11 @@ int main (int argc, char** argv)
 	// The same rotation matrix as before; theta radians arround Z axis
 	//transform_2.rotate (Eigen::AngleAxisf (theta, Eigen::Vector3f::UnitZ()));
 	
-  // Create a ROS subscriber for the input point cloud
-  ros::Subscriber sub = nh.subscribe ("/velodyne_points", 1, cloud_cb);
+  	// Create a ROS subscriber for the input point cloud
+  	ros::Subscriber sub = nh.subscribe ("/velodyne_points", 1, cloud_cb);
 	
-  // Create a ROS publisher for the output point cloud
-  pub = nh.advertise<sensor_msgs::PointCloud2> ("lidar/cropped_cloud", 1);
+  	// Create a ROS publisher for the output point cloud
+  	pub = nh.advertise<sensor_msgs::PointCloud2> ("lidar/cropped_cloud", 1);
 
 	// Create a ROS subscriber for the camera info
 	ros::Subscriber camera_info_sub = nh.subscribe("/videofile_test/camera_info", 1, camera_cb);
