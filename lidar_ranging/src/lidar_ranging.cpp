@@ -48,9 +48,11 @@ double prev_range_rate = 0;
 
 double prev_range = 100;
 
+
 pcl::PointXYZRGB camera_position(-1.872,0.0,0.655);
+double theta_y = 0;
 pcl::PointXYZRGB origin(0.0,0.0,0.0);
-double rotation_y = 0.17// in radians - 10 degrees
+double rotation_y = 0.17;// in radians - 10 degrees
 
 //publishers
 ros::Publisher pub;
@@ -80,13 +82,13 @@ cv::Mat range_rgb_pixels;// (3d array, with range from 0-255 mapped to rgb color
 void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered)
 {
 	pass.setInputCloud (cloud);
-  	pass.setFilterFieldName ("z");
-  	pass.setFilterLimits (-10, 10);
+	pass.setFilterFieldName ("z");
+	pass.setFilterLimits (-10, 10);
 	pass.filter(*cloud_filtered);
 	
 	pass.setInputCloud (cloud);
-  	pass.setFilterFieldName ("x");
-  	pass.setFilterLimits (0, 100);
+	pass.setFilterFieldName ("x");
+	pass.setFilterLimits (0, 100);
 	pass.filter(*cloud_filtered);
 
 	pass.setInputCloud(cloud_filtered);
@@ -291,8 +293,8 @@ void frame_cb(const geometry_msgs::Pose2D& pose_msg)
 	//frame_detected = true;
 	if(frame_detected)
 	{
-		frame_center_X = pose_msg.x;
-		frame_center_Y = pose_msg.y;
+		//frame_center_X = pose_msg.x;
+		//frame_center_Y = pose_msg.y;
 	}
 }
 
