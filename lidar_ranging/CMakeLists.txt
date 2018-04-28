@@ -150,6 +150,7 @@ include_directories(
 # add_executable(${PROJECT_NAME}_node src/lidar_ranging_node.cpp)
 
 add_executable(lidar_ranging src/lidar_ranging.cpp)
+add_executable(view_calibration src/view_calibration.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -171,6 +172,10 @@ target_link_libraries( lidar_ranging
 	${OpenCV_LIBRARIES}
 )
 
+target_link_libraries( view_calibration
+	${catkin_LIBRARIES}
+	${OpenCV_LIBRARIES}
+)
 
 #############
 ## Install ##
