@@ -1,8 +1,10 @@
 #include <ros/ros.h>
 #include <geometry_msgs/Pose2D.h>
 #include <geometry_msgs/PointStamped.h>
+#include <geometry_msgs/Point.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
+#include <visualization_msgs/Marker.h>
 // ROS specific includes
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
@@ -16,7 +18,6 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-#include <pcl/common/transforms.h>
 #include <pcl/common/geometry.h>
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/voxel_grid.h>
@@ -45,20 +46,21 @@ bool frame_has_appeared = false;
 double old_range = 0;
 double range_rate = 0;
 double prev_range_rate = 0;
-
 double prev_range = 100;
 
-
-pcl::PointXYZRGB camera_position(-1.872,0.0,0.655);
-double theta_y = 0;
-pcl::PointXYZRGB origin(0.0,0.0,0.0);
-double rotation_y = 0.17;// in radians - 10 degrees
+cv::Point3d camera_position = cv::Point3d(-1.872, 0.0, 0.655);
+//camera_position.x = -1.872;
+//camera_position.y = 0;
+//camera_position.z = 0.655;
+pcl::PointXYZRGB origin = pcl::PointXYZRGB(0,0,0);
+double theta_y = 0.02;
 
 //publishers
 ros::Publisher pub;
 ros::Publisher pub_2;
 ros::Publisher distancePub;
 ros::Publisher pointPublisher;
+ros::Publisher marker_pub;
 
 //camera objects
 image_transport::Publisher range_image_pub;
@@ -72,7 +74,6 @@ pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered (new pcl::PointCloud<pcl::
 // point cloud filtering obects
 pcl::PassThrough<pcl::PointXYZRGB> pass;
 pcl::VoxelGrid<pcl::PointXYZRGB> sor;
-Eigen::Affine3f transform_2 = Eigen::Affine3f::Identity(); // Matrix transform from camera pose -> lidar pose
 
 // range pixels 
 cv::Mat range_pixels; // (2d array of ranges)
@@ -83,7 +84,7 @@ void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, pcl:
 {
 	pass.setInputCloud (cloud);
 	pass.setFilterFieldName ("z");
-	pass.setFilterLimits (-10, 10);
+	pass.setFilterLimits (0, 10);
 	pass.filter(*cloud_filtered);
 	
 	pass.setInputCloud (cloud);
@@ -113,7 +114,7 @@ float calculate_distance(pcl::PointXYZRGB p1, pcl::PointXYZRGB p2)
 }
 
 int get_list_of_distances(std::vector<double> &distances_out, std::vector<double>& latitudes, 
-													pcl::PointXYZRGB camera_position, pcl::PointXYZRGB origin, double ray_elevation, double ray_bearing, 
+													cv::Point3d camera_position, pcl::PointXYZRGB origin, double ray_elevation, double ray_bearing, 
 													pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered)
 {
 	std::vector<double> distances_1deg(0);
@@ -140,16 +141,20 @@ int get_list_of_distances(std::vector<double> &distances_out, std::vector<double
 		double elevation_diff = std::abs(ray_elevation - point_elevation);
 		double bearing_diff = std::abs(ray_bearing - point_bearing);
 		
-		double tolerance = 0.0174533;
+		double elevation_tolerance = 0.01;
+		double bearing_tolerance = 0.0174533;
 		if(distance <= 20)
 		{
-			tolerance = 0.034;
+			bearing_tolerance = 0.034;
 		}
 		if(distance <=10)
 		{
-			tolerance = 0.0873;
+			bearing_tolerance = 0.0873;
+			elevation_tolerance = 0.05;
 		}
-		if(elevation_diff <= tolerance && bearing_diff <= tolerance && distance > 0.01)
+		//if(elevation_diff <= elevation_tolerance && bearing_diff <= bearing_tolerance && distance > 0.01)
+
+		if(bearing_diff <= bearing_tolerance && distance > 0.01 && z > 0)
 		{
 			distances_1deg.push_back(distance);
 			latitudes.push_back(y);
@@ -218,73 +223,160 @@ double estimate_distance_from_histogram(std::vector<double>& distances)
 	return winning_distance;
 }
 
-void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
+geometry_msgs::Point spherical_to_cartesian(double r, double elevation, double azimuth)
 {
-	// Convert message to pcl::PointCloud type
-  	pcl::fromROSMsg (*input, *cloud);
-	
-  	// Apply passthrough filter
-	apply_passthrough_filter(cloud, cloud_filtered);
-	
-  	// Downsampling
-  	//downsample(cloud_filtered, cloud_filtered);
-  
-  	// Matrix transformation
-  	//pcl::transformPointCloud (*cloud_filtered, *cloud_filtered, transform_2);  
-  
-	// Publish point cloud
-  	sensor_msgs::PointCloud2 output;
-	pcl::toROSMsg(*cloud_filtered, output);
-  	pub.publish (output);
-	
-	if(!cam_model_.initialized()) return;
-	
+		geometry_msgs::Point point;
+		point.x = r * std::cos(azimuth) * std::cos(elevation);
+		point.y = r * std::cos(elevation) * std::sin(azimuth);
+		point.z = r * std::sin(elevation);		
+		return point;
+}
+
+cv::Point3d calculate_ray(int frame_center_X, int frame_center_Y, image_geometry::PinholeCameraModel cam_model_, double theta_y)
+{
+	// get ray from pixel using pinhole camera model
 	cv::Point2d frame_center = cv::Point2d(frame_center_X, frame_center_Y);
 	cv::Point3d ray = cam_model_.projectPixelTo3dRay(frame_center);
-
+	cv::Point3d ray_rotated;
+	
+	// convert camera coordinate system to vlp-16 coordinate system convention
 	double ray_world_x = ray.z;
 	double ray_world_z = ray.y;
 	double ray_world_y = ray.x;
-	// apply rotation
-	double rotated_ray_x = std::cos(theta_y)*ray_world_x + std::sin(theta_y)*ray_world_z;
-	double rotated_ray_z = -std::sin(theta_y)*ray_world_x + std::cos(theta_y)*ray_world_z;
-	double rotated_ray_y = ray_world_y;
 
-	double lidar_elevation = rotated_ray_z / rotated_ray_x;
-	double lidar_bearing = rotated_ray_y / rotated_ray_x;
+	// apply rotation
+	ray_rotated.x = std::cos(theta_y)*ray_world_x + std::sin(theta_y)*ray_world_z;
+	ray_rotated.z = -std::sin(theta_y)*ray_world_x + std::cos(theta_y)*ray_world_z;
+	ray_rotated.y = ray_world_y;
+	return ray_rotated;
+}
+
+void draw_line(cv::Point3d ray, double r, cv::Point3d camera_position, ros::Publisher marker_pub)
+{
+		std::string frame_id = "velodyne";
+		std::string ns = "points_and_lines";
+		visualization_msgs::Marker points, line_strip;
+    points.header.frame_id = line_strip.header.frame_id = frame_id;
+    points.header.stamp = line_strip.header.stamp = ros::Time::now();
+    points.ns = line_strip.ns = ns;
+    points.action = line_strip.action = visualization_msgs::Marker::ADD;
+    points.pose.orientation.w = line_strip.pose.orientation.w = 1.0;
+
+    points.id = 0;
+    line_strip.id = 1;
+
+    points.type = visualization_msgs::Marker::POINTS;
+    line_strip.type = visualization_msgs::Marker::LINE_STRIP;
+
+	  // POINTS markers use x and y scale for width/height respectively
+	  points.scale.x = 0.2;
+	  points.scale.y = 0.2;
+
+	  // LINE_STRIP markers use only the x component of scale, for the line width
+	  line_strip.scale.x = 0.1;
+
+	  // Points are green
+	  points.color.g = 1.0f;
+	  points.color.a = 1.0;
+
+	  // Line strip is blue
+	  line_strip.color.b = 1.0;
+	  line_strip.color.a = 1.0;
+
+	  double myx = ray.y / ray.x;
+	  double mzx = ray.z / ray.x;
+		double num_intervals = 2;
+
+	  // Create the vertices for the points and lines
+	  for (uint32_t i = 0; i < num_intervals; ++i)
+	  {
+	    float dx = i*r/num_intervals;
+	    float dy = dx*myx;
+	    float dz = dx*mzx;
+
+	    geometry_msgs::Point p;
+	    p.x = camera_position.x + dx;
+	    p.y = camera_position.y + dy;
+	    p.z = camera_position.z + dz;
+
+	    points.points.push_back(p);
+	    line_strip.points.push_back(p);
+	  } 
+  	marker_pub.publish(points);
+  	marker_pub.publish(line_strip);
+}
+
+double estimate_distance(cv::Point3d ray, 
+													double prev_distance, 
+													cv::Point3d camera_position, 
+													pcl::PointXYZRGB origin, 
+													pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered)
+{
+	double lidar_elevation = ray.z / ray.x;
+	double lidar_bearing = ray.y / ray.x;
 		
   // iterate through point cloud by index
 	std::vector<double> distances(0);
 	std::vector<double> latitudes(0);
-
-	int count = get_list_of_distances(distances, latitudes, camera_position, origin, lidar_elevation, lidar_bearing, cloud_filtered);
-	double winning_distance = prev_range;
+	
+	// project ray onto xy plane, by setting camera_position = origin
+	// 
+	cv::Point3d lidar_position = cv::Point3d(0.0, 0.0, 0.0);
+	int count = get_list_of_distances(distances, latitudes, lidar_position, origin, lidar_elevation, lidar_bearing, cloud_filtered);
+	double distance = prev_distance;
 	if(count > 0) 
 	{
-		winning_distance = estimate_distance_from_histogram(distances);
-		prev_range = winning_distance;
+		distance = estimate_distance_from_histogram(distances);
 	}
-	if(frame_has_appeared)
-	{
-		std::printf("winning_distance: %f \t", winning_distance);
-		std::printf("count: %i \t", count);
-		std::printf("camera x,y : (%i , %i) \n", frame_center_X, frame_center_Y);
-		std_msgs::Float32 dist_msg;
-		dist_msg.data = winning_distance;
-		distancePub.publish(dist_msg);
+	return distance;
+}
+
+void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
+{
+	// Convert message to pcl::PointCloud type
+	pcl::fromROSMsg (*input, *cloud);
+	// Apply passthrough filter
+	apply_passthrough_filter(cloud, cloud_filtered);
+	// Downsampling
+	//downsample(cloud_filtered, cloud_filtered);
+  	
+	if(!cam_model_.initialized()) return;
+	if(!frame_has_appeared) return;
 	
-		geometry_msgs::PointStamped estimated_point;
-		estimated_point.point.x = winning_distance * std::cos(lidar_bearing) * std::cos(lidar_elevation);
-		estimated_point.point.y = std::cos(lidar_elevation)*std::sin(lidar_bearing) * winning_distance;
-		estimated_point.point.z = std::sin(lidar_elevation)*winning_distance;		
-		pointPublisher.publish(estimated_point);
-	}
-	/*if(!std::isnan(average_distance) && !std::isnan(old_range))
-	{
-		range_rate = (old_range - average_distance) * 10 + prev_range_rate / 2;
-	} else {
-		range_rate = std::nan("100");
-	}	*/
+	cv::Point3d ray = calculate_ray(frame_center_X, frame_center_Y, cam_model_,theta_y);	
+  double winning_distance = estimate_distance(ray, 
+													prev_range, 
+													camera_position, 
+													origin, 
+													cloud_filtered);
+	prev_range = winning_distance;
+
+	double lidar_elevation = ray.z / ray.x;
+	double lidar_bearing = ray.y / ray.x;
+	geometry_msgs::PointStamped estimated_point;
+	estimated_point.point = spherical_to_cartesian(winning_distance, lidar_elevation, lidar_bearing);	
+
+	// Publish estimated distance
+	std::printf("winning_distance: %f \t", winning_distance);
+	std::printf("camera x,y : (%i , %i) \n", frame_center_X, frame_center_Y);
+	std_msgs::Float32 dist_msg;
+	dist_msg.data = winning_distance;
+	distancePub.publish(dist_msg);
+	
+	// modified line
+	cv::Point3d projected_ray_xy_plane = 	cv::Point3d(ray.x, ray.y, 0);
+	// Draw ray
+	//draw_line(ray, 100, camera_position, marker_pub);	
+	// Draw projected ray
+	cv::Point3d lidar_position = cv::Point3d(0, 0, 0);
+	draw_line(projected_ray_xy_plane, 100, lidar_position, marker_pub);	
+
+	// Publish estimated point
+	pointPublisher.publish(estimated_point);
+	// Publish point cloud
+	sensor_msgs::PointCloud2 output;
+	pcl::toROSMsg(*cloud_filtered, output);
+	pub.publish (output);
 	
 }
 
@@ -293,8 +385,8 @@ void frame_cb(const geometry_msgs::Pose2D& pose_msg)
 	//frame_detected = true;
 	if(frame_detected)
 	{
-		//frame_center_X = pose_msg.x;
-		//frame_center_Y = pose_msg.y;
+		frame_center_X = pose_msg.x;
+		frame_center_Y = pose_msg.y;
 	}
 }
 
@@ -325,21 +417,19 @@ void camera_cb(const sensor_msgs::CameraInfoConstPtr& info_msg)
 
 int main (int argc, char** argv)
 {
+	if(argc > 1) {
+		theta_y = std::atof(argv[1]);
+	}
   // Initialize ROS
   ros::init (argc, argv, "lidar_ranging");
   ros::NodeHandle nh;
-  
-	// Define a translation matrix
-	transform_2.translation() << 1.872, 0.0, -0.655;
-
-	// The same rotation matrix as before; theta radians arround Z axis
-	//transform_2.rotate (Eigen::AngleAxisf (theta, Eigen::Vector3f::UnitZ()));
+	marker_pub = nh.advertise<visualization_msgs::Marker>("visualization_marker", 10);
 	
-  	// Create a ROS subscriber for the input point cloud
-  	ros::Subscriber sub = nh.subscribe ("/velodyne_points", 1, cloud_cb);
+  // Create a ROS subscriber for the input point cloud
+  ros::Subscriber sub = nh.subscribe ("/velodyne_points", 1, cloud_cb);
 	
-  	// Create a ROS publisher for the output point cloud
-  	pub = nh.advertise<sensor_msgs::PointCloud2> ("lidar/cropped_cloud", 1);
+  // Create a ROS publisher for the output point cloud
+  pub = nh.advertise<sensor_msgs::PointCloud2> ("lidar/cropped_cloud", 1);
 
 	// Create a ROS subscriber for the camera info
 	ros::Subscriber camera_info_sub = nh.subscribe("/videofile_test/camera_info", 1, camera_cb);
