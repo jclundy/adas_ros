@@ -356,9 +356,9 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 													origin, 
 													cloud_filtered);
 	prev_range = winning_distance;
-
 	double lidar_elevation = ray.z / ray.x;
 	double lidar_bearing = ray.y / ray.x;
+	double lateral_range = std::sin(lidar_bearing) * winning_distance;
 	geometry_msgs::PointStamped estimated_point;
 	estimated_point.point = spherical_to_cartesian(winning_distance, lidar_elevation, lidar_bearing);	
 
