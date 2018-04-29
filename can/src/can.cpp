@@ -368,7 +368,8 @@ int main(int argc, char** argv)
 
 	signal(SIGINT, inthand);
 
-	open_port("can0");
+	// select whatever interface is wired up on the Jetson
+	open_port("can1");
 
 	ros::Subscriber obj_id_sub = nh.subscribe("/darknet_ros/obj_id",1,obj_id_cb);
 	ros::Subscriber distance_sub = nh.subscribe("/lidar_ranging/distance",1, distance_cb);	 
