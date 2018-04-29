@@ -55,7 +55,7 @@ ros::Time start_time;
 int range_measurements = 0;
 
 cv::Point3d camera_position = cv::Point3d(-1.872, 0.0, 0.655);
-pcl::PointXYZRGB origin = pcl::PointXYZRGB(0,0,0);
+pcl::PointXYZ origin = pcl::PointXYZ(0,0,0);
 double theta_y = 0.02;
 
 //publishers
@@ -76,19 +76,19 @@ image_geometry::PinholeCameraModel cam_model_;
 sensor_msgs::CameraInfo camera_info_msg;
 
 //point cloud objects
-pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
-pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered (new pcl::PointCloud<pcl::PointXYZRGB>);
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered (new pcl::PointCloud<pcl::PointXYZ>);
 
 // point cloud filtering obects
-pcl::PassThrough<pcl::PointXYZRGB> pass;
-pcl::VoxelGrid<pcl::PointXYZRGB> sor;
+pcl::PassThrough<pcl::PointXYZ> pass;
+pcl::VoxelGrid<pcl::PointXYZ> sor;
 
 // range pixels 
 cv::Mat range_pixels; // (2d array of ranges)
 cv::Mat range_gray_pixels;// (2d array, with ranges mapped between 0 - 255, greyscale - for visualization purposes)
 cv::Mat range_rgb_pixels;// (3d array, with range from 0-255 mapped to rgb color - for visualization purposes)
 
-void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered)
+void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
 {
 	pass.setInputCloud (cloud);
 	pass.setFilterFieldName ("z");
@@ -106,14 +106,14 @@ void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, pcl:
 	pass.filter(*cloud_filtered);
 }
 
-void downsample(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered)
+void downsample(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
 {
   sor.setInputCloud (cloud);
   sor.setLeafSize (0.03f, 0.03f, 0.03f);
   sor.filter (*cloud_filtered);
 }
 
-float calculate_distance(pcl::PointXYZRGB p1, pcl::PointXYZRGB p2)
+float calculate_distance(pcl::PointXYZ p1, pcl::PointXYZ p2)
 {
 	float dx = p1.x - p2.x;
 	float dy = p1.y - p2.y;
@@ -122,8 +122,8 @@ float calculate_distance(pcl::PointXYZRGB p1, pcl::PointXYZRGB p2)
 }
 
 int get_list_of_distances(std::vector<double> &distances_out, std::vector<double>& latitudes, 
-													cv::Point3d camera_position, pcl::PointXYZRGB origin, double ray_elevation, double ray_bearing, 
-													pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered)
+													cv::Point3d camera_position, pcl::PointXYZ origin, double ray_elevation, double ray_bearing,
+													pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
 {
 	std::vector<double> distances_1deg(0);
 	int count = 0;
@@ -315,8 +315,8 @@ void draw_line(cv::Point3d ray, double r, cv::Point3d camera_position, ros::Publ
 double estimate_distance(cv::Point3d ray, 
 													double prev_distance, 
 													cv::Point3d camera_position, 
-													pcl::PointXYZRGB origin, 
-													pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered)
+													pcl::PointXYZ origin,
+													pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
 {
 	double lidar_elevation = ray.z / ray.x;
 	double lidar_bearing = ray.y / ray.x;
