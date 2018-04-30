@@ -257,10 +257,37 @@ cv::Point3d calculate_ray(int frame_center_X, int frame_center_Y, image_geometry
 	return ray_rotated;
 }
 
-void draw_line(cv::Point3d ray, double r, cv::Point3d camera_position, ros::Publisher marker_pub)
+cv::Point3d calculate_endpoint(cv::Point3d ray, cv::Point3d start_point, double r)
+{
+	cv::Point3d end_point;
+	double myx = ray.y / ray.x;
+  double mzx = ray.z / ray.x;
+
+	double ray_length = std::sqrt(ray.x*ray.x + ray.y*ray.y + ray.z*ray.z);
+	double cos_azimuth = ray.x / ray_length;
+
+	float dx = cos_azimuth * r;
+  float dy = dx*myx;
+  float dz = dx*mzx;
+  end_point.x = start_point.x + dx;
+  end_point.y = start_point.y + dy;
+  end_point.z = start_point.z + dz;
+	return end_point;
+}
+
+geometry_msgs::Point convert_cv_point_to_geometry_msgs(cv::Point3d point)
+{
+	geometry_msgs::Point point_msg;
+	point_msg.x = point.x;
+	point_msg.y = point.y;
+	point_msg.z = point.z;
+	return point_msg;
+}
+
+void draw_line(cv::Point3d start_point, cv::Point3d end_point, ros::Publisher marker_pub, double line_r, double line_b, double line_g, std::string name)
 {
 		std::string frame_id = "velodyne";
-		std::string ns = "points_and_lines";
+		std::string ns = name;
 		visualization_msgs::Marker points, line_strip;
     points.header.frame_id = line_strip.header.frame_id = frame_id;
     points.header.stamp = line_strip.header.stamp = ros::Time::now();
@@ -286,28 +313,20 @@ void draw_line(cv::Point3d ray, double r, cv::Point3d camera_position, ros::Publ
 	  points.color.a = 1.0;
 
 	  // Line strip is blue
-	  line_strip.color.b = 1.0;
+		line_strip.color.r = line_r;
+		line_strip.color.g = line_g;
+		line_strip.color.b = line_b;
 	  line_strip.color.a = 1.0;
 
-	  double myx = ray.y / ray.x;
-	  double mzx = ray.z / ray.x;
-		double num_intervals = 2;
+		// Populate point list and line strip
+		geometry_msgs::Point start = convert_cv_point_to_geometry_msgs(start_point);
+		geometry_msgs::Point end = convert_cv_point_to_geometry_msgs(end_point);
+		points.points.push_back(start);
+    line_strip.points.push_back(start);
+    points.points.push_back(end);
+    line_strip.points.push_back(end);
 
-	  // Create the vertices for the points and lines
-	  for (uint32_t i = 0; i < num_intervals; ++i)
-	  {
-	    float dx = i*r/num_intervals;
-	    float dy = dx*myx;
-	    float dz = dx*mzx;
-
-	    geometry_msgs::Point p;
-	    p.x = camera_position.x + dx;
-	    p.y = camera_position.y + dy;
-	    p.z = camera_position.z + dz;
-
-	    points.points.push_back(p);
-	    line_strip.points.push_back(p);
-	  } 
+		// Publish the point and line markers
   	marker_pub.publish(points);
   	marker_pub.publish(line_strip);
 }
@@ -356,17 +375,24 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 													origin, 
 													cloud_filtered);
 	prev_range = winning_distance;
+
+	// TODO CORRECT THE MATH
 	double lidar_elevation = ray.z / ray.x;
 	double lidar_bearing = ray.y / ray.x;
 	double lateral_range = std::sin(lidar_bearing) * winning_distance;
 	geometry_msgs::PointStamped estimated_point;
 	estimated_point.point = spherical_to_cartesian(winning_distance, lidar_elevation, lidar_bearing);	
+	// END of TODO
 
 	// modified line
 	cv::Point3d projected_ray_xy_plane = cv::Point3d(ray.x, ray.y, 0);
 	// Draw projected ray
 	cv::Point3d lidar_position = cv::Point3d(0, 0, 0);
-	draw_line(projected_ray_xy_plane, 100, lidar_position, marker_pub);	
+	cv::Point3d end_point_50m = calculate_endpoint(projected_ray_xy_plane,lidar_position, 50);
+
+	draw_line(lidar_position, end_point_50m, marker_pub, 0.0, 0.0, 1.0, "points_and_lines_50m");
+	cv::Point3d end_point = calculate_endpoint(projected_ray_xy_plane,lidar_position, winning_distance);
+	draw_line(lidar_position, end_point, marker_pub, 1.0, 0.0, 0.0, "points_and_lines");
 
 	// Publish estimated point
 	pointPublisher.publish(estimated_point);
