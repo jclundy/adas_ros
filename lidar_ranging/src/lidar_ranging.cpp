@@ -23,7 +23,6 @@
 #include <pcl/common/geometry.h>
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/voxel_grid.h>
-#include <pcl/range_image/range_image.h>
 #include <pcl/visualization/common/float_image_utils.h>
 #include <pcl/surface/mls.h>
 // c++ std
@@ -36,6 +35,7 @@
 #define CENTER_X 320
 #define CENTER_U 200
 #define BEARING_TOL 0.0174533
+#define LIDAR_DATA_RATE_HZ 10
 
 int frame_center_X = 320;
 int frame_center_Y = 150;
@@ -58,6 +58,8 @@ int range_measurements = 0;
 cv::Point3d camera_position = cv::Point3d(-1.872, 0.0, 0.655);
 pcl::PointXYZ origin = pcl::PointXYZ(0,0,0);
 double theta_y = 0.02;
+double MIN_Z = 0.1;
+double MAX_Z = 4;
 
 //publishers
 ros::Publisher pub;
@@ -72,7 +74,6 @@ ros::Publisher pointPublisher;
 ros::Publisher marker_pub;
 
 //camera objects
-image_transport::Publisher range_image_pub;
 image_geometry::PinholeCameraModel cam_model_;
 sensor_msgs::CameraInfo camera_info_msg;
 
@@ -83,11 +84,6 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered (new pcl::PointCloud<pcl::Poi
 // point cloud filtering obects
 pcl::PassThrough<pcl::PointXYZ> pass;
 pcl::VoxelGrid<pcl::PointXYZ> sor;
-
-// range pixels 
-cv::Mat range_pixels; // (2d array of ranges)
-cv::Mat range_gray_pixels;// (2d array, with ranges mapped between 0 - 255, greyscale - for visualization purposes)
-cv::Mat range_rgb_pixels;// (3d array, with range from 0-255 mapped to rgb color - for visualization purposes)
 
 void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
 {
@@ -122,13 +118,14 @@ float calculate_distance(pcl::PointXYZ p1, pcl::PointXYZ p2)
 	return std::sqrt(dx*dx + dy*dy + dz*dz);
 }
 
-int get_list_of_distances(std::vector<double> &distances_out, std::vector<double>& latitudes, 
+int get_list_of_distances(std::vector<double> &distances_out,
 													cv::Point3d camera_position, pcl::PointXYZ origin, double ray_elevation, double ray_bearing,
 													pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
 {
-	std::vector<double> distances_1deg(0);
+	std::vector<double> distances(0);
 	int count = 0;
 	int num_points = cloud_filtered->points.size();
+
 	for(int i = 0; i < num_points; i++)
   {	
     
@@ -150,28 +147,16 @@ int get_list_of_distances(std::vector<double> &distances_out, std::vector<double
 		
 		double elevation_tolerance = 0.01;
 		double bearing_tolerance = BEARING_TOL;
-		if(distance <= 20)
-		{
-			bearing_tolerance = 0.034;
-		}
-		if(distance <=10)
-		{
-			bearing_tolerance = 0.0873;
-			elevation_tolerance = 0.05;
-		}
-		//if(elevation_diff <= elevation_tolerance && bearing_diff <= bearing_tolerance && distance > 0.01)
 
-		if(bearing_diff <= bearing_tolerance && distance > 0.01 && z > 0)
+		if(bearing_diff <= bearing_tolerance && distance > 0.01 && z > MIN_Z && z < MAX_Z)
 		{
-			distances_1deg.push_back(distance);
-			latitudes.push_back(y);
+			distances.push_back(distance);
 			count++;
 		}
   }
 	// generate sorted list of points
-	std::sort (distances_1deg.begin(), distances_1deg.end());
-	std::sort (latitudes.begin(), latitudes.end());
-	distances_out = distances_1deg;
+	std::sort (distances.begin(), distances.end());
+	distances_out = distances;
 	// print distances
 	/*std::printf("sorted distance list \n");
 	std::printf("%i points\n", count);
@@ -371,12 +356,11 @@ double estimate_distance(cv::Point3d ray,
 		
   // iterate through point cloud by index
 	std::vector<double> distances(0);
-	std::vector<double> latitudes(0);
 	
 	// project ray onto xy plane, by setting camera_position = origin
 	// 
 	cv::Point3d lidar_position = cv::Point3d(0.0, 0.0, 0.0);
-	int count = get_list_of_distances(distances, latitudes, lidar_position, origin, lidar_elevation, lidar_bearing, cloud_filtered);
+	int count = get_list_of_distances(distances, lidar_position, origin, lidar_elevation, lidar_bearing, cloud_filtered);
 	double distance = prev_distance;
 	if(count > 0) 
 	{
@@ -433,8 +417,8 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 
 	// Log estimated distance
 	std::printf("winning_distance: %f \t", winning_distance);
-	std::printf("camera x,y : (%i , %i) \n", frame_center_X, frame_center_Y);
-
+	std::printf("camera x,y : (%i , %i) \t", frame_center_X, frame_center_Y);
+	std::printf("frame detected : %i \n", frame_detected);
 	// Publish info for CAN bus
 	// Long range
 	std_msgs::Float32 dist_msg;
@@ -461,7 +445,6 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 
 void frame_cb(const geometry_msgs::Pose2D& pose_msg)
 {
-	//frame_detected = true;
 	if(frame_detected)
 	{
 		frame_center_X = pose_msg.x;
@@ -476,10 +459,11 @@ void frame_detected_cb(const std_msgs::Bool& frame_detected_msg)
 		frame_detected = true;
 		frame_has_appeared = true;
 	} else {
+		frame_detected = false;
 		no_detection_count++;
-		if(no_detection_count > 40)
+		if(no_detection_count > 20)
 		{
-			frame_detected = false;
+			frame_has_appeared = false;
 			no_detection_count = 0;
 		}
 	}
@@ -491,13 +475,19 @@ void camera_cb(const sensor_msgs::CameraInfoConstPtr& info_msg)
   if(!cam_model_.initialized())
   {
     cam_model_.fromCameraInfo(*info_msg);
+		std::printf("camera model initialized\n");
   }
 }
 
 int main (int argc, char** argv)
 {
+	std::printf("running lidar ranging\n");
 	if(argc > 1) {
-		theta_y = std::atof(argv[1]);
+		MIN_Z = std::atof(argv[1]);
+		std::printf("min z: %f\n", MIN_Z);
+	} if (argc > 2) {
+		MAX_Z = std::atof(argv[2]);
+		std::printf("max z: %f\n", MAX_Z);
 	}
   // Initialize ROS
   ros::init (argc, argv, "lidar_ranging");
@@ -514,13 +504,12 @@ int main (int argc, char** argv)
 	
 	// Create a ROS::ImageTransport publisher for the output point cloud
 	image_transport::ImageTransport it(nh);
-	range_image_pub = it.advertise("lidar/range_image",1);
 	
 	// Create ROS subscriber for frame_center_sub
 	ros::Subscriber frame_center_sub = nh.subscribe("/darknet_ros/frame_center",1,frame_cb);
 	ros::Subscriber frame_detected_sub = nh.subscribe("/darknet_ros/frame_detected",1,frame_detected_cb);
   
-	distancePub = nh.advertise<std_msgs::Float32>("/darknet_ros/distance",1);
+	distancePub = nh.advertise<std_msgs::Float32>("/lidar_ranging/distance",1);
 	azimuth_pub = nh.advertise<std_msgs::Float32>("/lidar_ranging/azimuth",1);
 	lateral_distance_pub = nh.advertise<std_msgs::Float32>("/lidar_ranging/lateral_distance",1);
 	relative_lane_pub = nh.advertise<std_msgs::Int32>("/lidar_ranging/relative_lane",1);
