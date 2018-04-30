@@ -35,6 +35,7 @@
 
 #define CENTER_X 320
 #define CENTER_U 200
+#define BEARING_TOL 0.0174533
 
 int frame_center_X = 320;
 int frame_center_Y = 150;
@@ -148,7 +149,7 @@ int get_list_of_distances(std::vector<double> &distances_out, std::vector<double
 		double bearing_diff = std::abs(ray_bearing - point_bearing);
 		
 		double elevation_tolerance = 0.01;
-		double bearing_tolerance = 0.0174533;
+		double bearing_tolerance = BEARING_TOL;
 		if(distance <= 20)
 		{
 			bearing_tolerance = 0.034;
@@ -257,13 +258,18 @@ cv::Point3d calculate_ray(int frame_center_X, int frame_center_Y, image_geometry
 	return ray_rotated;
 }
 
+double calculate_ray_length(cv::Point3d ray)
+{
+	return std::sqrt(ray.x*ray.x + ray.y*ray.y + ray.z*ray.z);
+}
+
 cv::Point3d calculate_endpoint(cv::Point3d ray, cv::Point3d start_point, double r)
 {
 	cv::Point3d end_point;
 	double myx = ray.y / ray.x;
   double mzx = ray.z / ray.x;
 
-	double ray_length = std::sqrt(ray.x*ray.x + ray.y*ray.y + ray.z*ray.z);
+	double ray_length = calculate_ray_length(ray);
 	double cos_azimuth = ray.x / ray_length;
 
 	float dx = cos_azimuth * r;
@@ -284,7 +290,7 @@ geometry_msgs::Point convert_cv_point_to_geometry_msgs(cv::Point3d point)
 	return point_msg;
 }
 
-void draw_line(cv::Point3d start_point, cv::Point3d end_point, ros::Publisher marker_pub, double line_r, double line_b, double line_g, std::string name)
+void draw_line(cv::Point3d start_point, cv::Point3d end_point, ros::Publisher marker_pub, double line_r, double line_g, double line_b, std::string name)
 {
 		std::string frame_id = "velodyne";
 		std::string ns = name;
@@ -329,6 +335,29 @@ void draw_line(cv::Point3d start_point, cv::Point3d end_point, ros::Publisher ma
 		// Publish the point and line markers
   	marker_pub.publish(points);
   	marker_pub.publish(line_strip);
+}
+
+double draw_search_boundaries(cv::Point3d ray, cv::Point3d start_point, double r, double angle_tolerance, ros::Publisher marker_pub)
+{
+	double ray_length = calculate_ray_length(ray);
+	double myx = ray.y / ray.x;
+	double theta_center = std::atan(myx);
+	double theta_left = theta_center - angle_tolerance;
+	double theta_right = theta_center + angle_tolerance;
+
+	cv::Point3d ray_left;
+	ray_left.x = ray_length * cos(theta_left);
+	ray_left.y = ray_length * sin(theta_left);
+
+	cv::Point3d ray_right;
+	ray_right.x = ray_length * cos(theta_right);
+	ray_right.y = ray_length * sin(theta_right);
+
+	cv::Point3d left_end_point = calculate_endpoint(ray_left,start_point, r);
+	draw_line(start_point, left_end_point, marker_pub, 1.0, 0.0, 0.0, "offset_left_ray");
+
+	cv::Point3d right_end_point = calculate_endpoint(ray_right,start_point, r);
+	draw_line(start_point, right_end_point, marker_pub, 1.0, 0.0, 0.0, "offset_right_ray");
 }
 
 double estimate_distance(cv::Point3d ray, 
@@ -393,6 +422,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	draw_line(lidar_position, end_point_50m, marker_pub, 0.0, 0.0, 1.0, "points_and_lines_50m");
 	cv::Point3d end_point = calculate_endpoint(projected_ray_xy_plane,lidar_position, winning_distance);
 	draw_line(lidar_position, end_point, marker_pub, 1.0, 0.0, 0.0, "points_and_lines");
+	draw_search_boundaries(projected_ray_xy_plane, lidar_position, 50, BEARING_TOL, marker_pub);
 
 	// Publish estimated point
 	pointPublisher.publish(estimated_point);
