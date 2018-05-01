@@ -38,6 +38,8 @@
 #define LIDAR_DATA_PERIOD_S 0.1
 #define MAX_RANGE_RATE 50 // m/s
 #define MAX_NO_DETECTION_COUNT 10
+#define MEASUREMENT_LIST_LENGTH 5
+#define RANGE_MEASUREMENT_AVERAGE_DIFF_TOL 2 
 
 int frame_center_X = 320;
 int frame_center_Y = 150;
@@ -52,11 +54,15 @@ double range_rate = 0;
 double prev_range_rate = 0;
 double prev_range = 0;
 double predicted_range = 0;
+std::vector<double> measurements(MEASUREMENT_LIST_LENGTH);
+int measurements_index = 0;
+int measurement_count = 0;
 
 ros::Time prev_time;
 ros::Time current_time;
 ros::Time start_time;
 int range_measurements = 0;
+
 
 cv::Point3d camera_position = cv::Point3d(-1.872, 0.0, 0.655);
 pcl::PointXYZ origin = pcl::PointXYZ(0,0,0);
@@ -377,6 +383,15 @@ double estimate_distance(cv::Point3d ray,
 	return distance;
 }
 
+double calculate_average(std::vector<double> measurements, int count)
+{
+	double average = 0;
+	for (int i = 0; i < count; i++) {
+		average += measurements[i];
+	}
+	return average/double(count);
+}
+
 void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 {
 	// Convert message to pcl::PointCloud type
@@ -390,35 +405,55 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	if(!frame_has_appeared) return;
 	
 	cv::Point3d ray = calculate_ray(frame_center_X, frame_center_Y, cam_model_,theta_y);	
-  double winning_distance = estimate_distance(ray, 
+  double measured_range = estimate_distance(ray, 
 													prev_range,
 													prev_range_rate,
 													camera_position, 
 													origin, 
 													cloud_filtered);
 
+	
+	measurements_index = (measurements_index + 1) % MEASUREMENT_LIST_LENGTH;
+	measurements[measurements_index] = measured_range;
+	if(measurement_count < 5)
+	{
+		measurement_count++;
+	}
+	double average_of_prev_measurements = calculate_average(measurements, measurement_count);
+	double measurement_diff_with_average = abs(average_of_prev_measurements - measured_range);
+	
+	double range_estimation = measured_range;
+	double diff_bt_predicted_and_measured = std::abs(predicted_range - measured_range);
 	// calculate range rate
 	if(prev_range != 0)
 	{
 		predicted_range = prev_range + prev_range_rate * LIDAR_DATA_PERIOD_S;
-		range_rate = (winning_distance - prev_range) * LIDAR_DATA_RATE_HZ;
-		if(std::abs(range_rate) > MAX_RANGE_RATE)
+		range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
+		
+		if(std::abs(range_rate) > MAX_RANGE_RATE || (diff_bt_predicted_and_measured *LIDAR_DATA_RATE_HZ) > MAX_RANGE_RATE)
 		{
-			std::printf("invalid range rate %f / distance estimation %f, \n",range_rate, winning_distance);
-			range_rate = prev_range_rate;
-			winning_distance = predicted_range;
+			if(measurement_diff_with_average < RANGE_MEASUREMENT_AVERAGE_DIFF_TOL)
+			{
+				printf("readjusting to new range baseline\n");
+				prev_range = average_of_prev_measurements;
+				range_rate = range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
+			} else {
+				std::printf("invalid range rate %f / distance estimation %f, \n",range_rate, measured_range);
+				range_rate = prev_range_rate;
+				range_estimation = predicted_range;
+			}
 		}
 	}
 
 	prev_range_rate = range_rate;
-	prev_range = winning_distance;
+	prev_range = range_estimation;
 
 	// TODO CORRECT THE MATH
 	double lidar_elevation = ray.z / ray.x;
 	double lidar_bearing = ray.y / ray.x;
-	double lateral_range = std::sin(lidar_bearing) * winning_distance;
+	double lateral_range = std::sin(lidar_bearing) * range_estimation;
 	geometry_msgs::PointStamped estimated_point;
-	estimated_point.point = spherical_to_cartesian(winning_distance, lidar_elevation, lidar_bearing);	
+	estimated_point.point = spherical_to_cartesian(range_estimation, lidar_elevation, lidar_bearing);	
 	// END of TODO
 
 	// modified line
@@ -428,7 +463,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	cv::Point3d end_point_50m = calculate_endpoint(projected_ray_xy_plane,lidar_position, 50);
 
 	draw_line(lidar_position, end_point_50m, marker_pub, 0.0, 0.0, 1.0, "points_and_lines_50m");
-	cv::Point3d end_point = calculate_endpoint(projected_ray_xy_plane,lidar_position, winning_distance);
+	cv::Point3d end_point = calculate_endpoint(projected_ray_xy_plane,lidar_position, range_estimation);
 	draw_line(lidar_position, end_point, marker_pub, 1.0, 0.0, 0.0, "points_and_lines");
 	draw_search_boundaries(projected_ray_xy_plane, lidar_position, 50, BEARING_TOL, marker_pub);
 
@@ -440,15 +475,15 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	pub.publish (output);
 
 	// Log estimated distance
-	std::printf("winning_distance: %f \t", winning_distance);
-	std::printf("predicted distance: %f \t", predicted_range);
+	std::printf("range_estimation: %f \t", range_estimation);
+	std::printf("predicted_range: %f \t", predicted_range);
 	std::printf("range rate: %f \t", range_rate);
 	//std::printf("camera x,y : (%i , %i) \t", frame_center_X, frame_center_Y);
 	std::printf("frame detected : %i \n", frame_detected);
 	// Publish info for CAN bus
 	// Long range
 	std_msgs::Float32 dist_msg;
-	dist_msg.data = winning_distance;
+	dist_msg.data = range_estimation;
 	distancePub.publish(dist_msg);
 	// Azimuth
 	std_msgs::Float32 azimuth_msg;
@@ -491,6 +526,9 @@ void frame_detected_cb(const std_msgs::Bool& frame_detected_msg)
 		{
 			frame_has_appeared = false;
 			no_detection_count = 0;
+			measurement_count = 0;
+			measurements_index = 0;
+			prev_range = 0;
 		}
 	}
 }
