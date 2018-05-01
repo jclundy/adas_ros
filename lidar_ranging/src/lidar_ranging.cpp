@@ -49,8 +49,6 @@ int no_detection_count = 0;
 double previous_distance = 0;
 bool frame_has_appeared = false;
 
-double old_range = 0;
-double range_rate = 0;
 double prev_range_rate = 0;
 double prev_range = 0;
 double predicted_range = 0;
@@ -415,22 +413,28 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	
 	measurements_index = (measurements_index + 1) % MEASUREMENT_LIST_LENGTH;
 	measurements[measurements_index] = measured_range;
-	if(measurement_count < 5)
+	if(measurement_count < 5 && measured_range != 0)
 	{
 		measurement_count++;
 	}
-	double average_of_prev_measurements = calculate_average(measurements, measurement_count);
-	double measurement_diff_with_average = abs(average_of_prev_measurements - measured_range);
 	
 	double range_estimation = measured_range;
-	double diff_bt_predicted_and_measured = std::abs(predicted_range - measured_range);
-	// calculate range rate
-	if(prev_range != 0)
+	double range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
+	if(prev_range == 0) {
+		range_rate = 0;
+	}
+	if(std::abs(range_rate) > MAX_RANGE_RATE){
+		range_rate = prev_range_rate;
+	}
+
+	if(range_rate != 0 && measurement_count >= 5)
 	{
 		predicted_range = prev_range + prev_range_rate * LIDAR_DATA_PERIOD_S;
-		range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
-		
-		if(std::abs(range_rate) > MAX_RANGE_RATE || (diff_bt_predicted_and_measured *LIDAR_DATA_RATE_HZ) > MAX_RANGE_RATE)
+		double average_of_prev_measurements = calculate_average(measurements, measurement_count);
+		double measurement_diff_with_average = abs(average_of_prev_measurements - measured_range);	
+		double diff_bt_predicted_and_measured = std::abs(predicted_range - measured_range);
+
+		if(std::abs(range_rate) > MAX_RANGE_RATE) // || (diff_bt_predicted_and_measured *LIDAR_DATA_RATE_HZ) > MAX_RANGE_RATE
 		{
 			if(measurement_diff_with_average < RANGE_MEASUREMENT_AVERAGE_DIFF_TOL)
 			{
@@ -438,7 +442,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 				prev_range = average_of_prev_measurements;
 				range_rate = range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
 			} else {
-				std::printf("invalid range rate %f / distance estimation %f, \n",range_rate, measured_range);
+				std::printf("invalid range rate %f / distance estimation %f \n",range_rate, measured_range);
 				range_rate = prev_range_rate;
 				range_estimation = predicted_range;
 			}
@@ -478,8 +482,9 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	std::printf("range_estimation: %f \t", range_estimation);
 	std::printf("predicted_range: %f \t", predicted_range);
 	std::printf("range rate: %f \t", range_rate);
-	//std::printf("camera x,y : (%i , %i) \t", frame_center_X, frame_center_Y);
-	std::printf("frame detected : %i \n", frame_detected);
+	std::printf("camera x,y : (%i , %i) \t", frame_center_X, frame_center_Y);
+	std::printf("frame detected : %i \t", frame_detected);
+	std::printf("measurement count : %i \n", measurement_count);
 	// Publish info for CAN bus
 	// Long range
 	std_msgs::Float32 dist_msg;
