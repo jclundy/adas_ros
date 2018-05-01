@@ -11,9 +11,14 @@ Camera video is streamed over UDP socket from the NXP S32V to the Jetson on Ethe
 - [x] Bounding Box positional tracking
 - [x] Record output video
 - [x] Reduce YOLO catagories
-- [] Driver Feedback
-- [x] Automatic Booting
-- [x] Data logging
+- [ ] Driver Feedback (Lift off accel and brake thresholds)
+- [ ] Data logging on CAN
+- [ ] Multi object range estimation/ system test
+- [ ] Auto boot (S32V234, fix run_live_detect_range.sh)
+- [ ] Solder jumper cable for S32V234
+- [ ] Solder CAN board to Jetson
+- [ ] Communication between RPi and Jetson
+- [ ] brake light detection (assume first frame of detection is brake not applied)
 
 
 ## Building YOLO/Darknet
