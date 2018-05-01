@@ -63,9 +63,7 @@ bool tracker_init = false;
 std::vector<float> obj_age;
 
 double range = 0;
-double old_range = 0;
 double range_rate = 0;
-double prev_range_rate = 0;
 int relative_lane = 0;
 
 int frameCount = 0;
@@ -165,19 +163,6 @@ std::pair<darknet_ros::DetectedObjects, cv_bridge::CvImagePtr> detectImage(senso
 				    	  if(trackers.size() > 0){
 									for(int i = 0; i < trackers.size(); i++)
 									{										
-									
-										if(frameCount % (int)fps.count() == 0){
-											old_range = range;
-											if(!std::isnan(range) && !std::isnan(old_range))
-											{
-												range_rate = range - old_range;
-											} 
-											else 
-											{
-												range_rate = std::nan("1");
-											}										
-										}
-									
 										if((newRect[objId].area() < MAX_INVALID_DETECTED_AREA)){
 											int overlapArea = (newRect[objId] & bbox[i]).area();									    		
 								  		int old_centroid_to_vertex_x = bbox[i].width/2;
@@ -478,15 +463,12 @@ void imageCallback(const sensor_msgs::ImageConstPtr msg)
 
 void distance_cb(const std_msgs::Float32& msg_data)
 {
-	old_range = range;
 	range = msg_data.data;
-	
-	if(!std::isnan(range) && !std::isnan(old_range))
-	{
-		range_rate = (old_range - range) * 10 + prev_range_rate / 2;
-	} else {
-		range_rate = std::nan("1");
-	}	
+}
+
+void range_rate_cb(const std_msgs::Float32& msg_data)
+{
+	range_rate = msg_data.data;
 }
 
 void relative_lane_cb(const std_msgs::Int32& msg_data)
@@ -521,9 +503,10 @@ int main(int argc, char **argv)
 	frameDetectedPub = nh.advertise<std_msgs::Bool>("/darknet_ros/frame_detected",1);
   std::string ros_path = ros::package::getPath("darknet_ros");
 
-	ros::Subscriber distance_sub = nh.subscribe("/lidar_ranging/distance",1,distance_cb);  
+	ros::Subscriber distance_sub = nh.subscribe("/lidar_ranging/distance",1,distance_cb);
 	ros::Subscriber relative_lane_sub = nh.subscribe("/lidar_ranging/relative_lane",1,relative_lane_cb);
-	
+	ros::Subscriber range_rate_sub = nh.subscribe("/lidar_ranging/range_rate",1,range_rate_cb);
+
   ros::NodeHandle priNh( "~" );
   std::string yoloWeightsFile;
   std::string yoloConfigFile;
