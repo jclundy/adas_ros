@@ -34,8 +34,10 @@
 
 #define CENTER_X 320
 #define CENTER_U 200
-#define BEARING_TOL 0.0174533
 #define LIDAR_DATA_RATE_HZ 10
+#define LIDAR_DATA_PERIOD_S 0.1
+#define MAX_RANGE_RATE 50 // m/s
+#define MAX_NO_DETECTION_COUNT 10
 
 int frame_center_X = 320;
 int frame_center_Y = 150;
@@ -48,7 +50,8 @@ bool frame_has_appeared = false;
 double old_range = 0;
 double range_rate = 0;
 double prev_range_rate = 0;
-double prev_range = 100;
+double prev_range = 0;
+double predicted_range = 0;
 
 ros::Time prev_time;
 ros::Time current_time;
@@ -60,6 +63,7 @@ pcl::PointXYZ origin = pcl::PointXYZ(0,0,0);
 double theta_y = 0.02;
 double MIN_Z = 0.1;
 double MAX_Z = 4;
+double BEARING_TOL = 0.0174533;
 
 //publishers
 ros::Publisher pub;
@@ -346,7 +350,8 @@ double draw_search_boundaries(cv::Point3d ray, cv::Point3d start_point, double r
 }
 
 double estimate_distance(cv::Point3d ray, 
-													double prev_distance, 
+													double prev_distance,
+													double range_rate,
 													cv::Point3d camera_position, 
 													pcl::PointXYZ origin,
 													pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
@@ -361,10 +366,13 @@ double estimate_distance(cv::Point3d ray,
 	// 
 	cv::Point3d lidar_position = cv::Point3d(0.0, 0.0, 0.0);
 	int count = get_list_of_distances(distances, lidar_position, origin, lidar_elevation, lidar_bearing, cloud_filtered);
-	double distance = prev_distance;
+
+	double distance = prev_distance + range_rate * LIDAR_DATA_PERIOD_S;
 	if(count > 0) 
 	{
 		distance = estimate_distance_from_histogram(distances);
+	} else {
+		std::printf("no points detected, estimating based on range rate \n");
 	}
 	return distance;
 }
@@ -383,10 +391,26 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	
 	cv::Point3d ray = calculate_ray(frame_center_X, frame_center_Y, cam_model_,theta_y);	
   double winning_distance = estimate_distance(ray, 
-													prev_range, 
+													prev_range,
+													prev_range_rate,
 													camera_position, 
 													origin, 
 													cloud_filtered);
+
+	// calculate range rate
+	if(prev_range != 0)
+	{
+		predicted_range = prev_range + prev_range_rate * LIDAR_DATA_PERIOD_S;
+		range_rate = (winning_distance - prev_range) * LIDAR_DATA_RATE_HZ;
+		if(std::abs(range_rate) > MAX_RANGE_RATE)
+		{
+			std::printf("invalid range rate %f / distance estimation %f, \n",range_rate, winning_distance);
+			range_rate = prev_range_rate;
+			winning_distance = predicted_range;
+		}
+	}
+
+	prev_range_rate = range_rate;
 	prev_range = winning_distance;
 
 	// TODO CORRECT THE MATH
@@ -417,7 +441,9 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 
 	// Log estimated distance
 	std::printf("winning_distance: %f \t", winning_distance);
-	std::printf("camera x,y : (%i , %i) \t", frame_center_X, frame_center_Y);
+	std::printf("predicted distance: %f \t", predicted_range);
+	std::printf("range rate: %f \t", range_rate);
+	//std::printf("camera x,y : (%i , %i) \t", frame_center_X, frame_center_Y);
 	std::printf("frame detected : %i \n", frame_detected);
 	// Publish info for CAN bus
 	// Long range
@@ -461,7 +487,7 @@ void frame_detected_cb(const std_msgs::Bool& frame_detected_msg)
 	} else {
 		frame_detected = false;
 		no_detection_count++;
-		if(no_detection_count > 20)
+		if(no_detection_count > MAX_NO_DETECTION_COUNT)
 		{
 			frame_has_appeared = false;
 			no_detection_count = 0;
@@ -488,6 +514,9 @@ int main (int argc, char** argv)
 	} if (argc > 2) {
 		MAX_Z = std::atof(argv[2]);
 		std::printf("max z: %f\n", MAX_Z);
+	} if (argc > 3) {
+		BEARING_TOL = std::atof(argv[3]);
+		std::printf("bearing tol: %f\n", BEARING_TOL);
 	}
   // Initialize ROS
   ros::init (argc, argv, "lidar_ranging");
