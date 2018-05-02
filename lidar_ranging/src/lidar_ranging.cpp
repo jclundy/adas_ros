@@ -610,8 +610,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
   // Log estimated distance
   log_range_data(detection_objects[0]);
   // Visualize range estimation
-  //std::printf("visualizing ray\n");
-  //visualize_ray(detection_objects[0], marker_pub);
+  visualize_ray(detection_objects[0], marker_pub);
 
   // 4. Publish data
 	// Publish point cloud	
