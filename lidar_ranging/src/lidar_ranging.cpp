@@ -93,6 +93,61 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered (new pcl::PointCloud<pcl::Poi
 pcl::PassThrough<pcl::PointXYZ> pass;
 pcl::VoxelGrid<pcl::PointXYZ> sor;
 
+/************** Section 0: detection object class definition *******************/
+class DetectionObject
+{
+  public:
+  // image frame variables
+  int id;
+  int cx;
+  int cy;
+  int frame_width;
+  int frame_height;
+  // detection state
+  bool frame_detected;
+  bool frame_has_appeared;
+  int no_detection_count;
+  // image ray (ie 3d vector) variables
+  cv::Point3d ray;
+  double azimuth;
+  double elevation;
+  // range estimation variables
+  double range;
+  double prev_range;
+  double range_rate;
+  double prev_range_rate;
+  std::vector<double> measurements;
+  int measurements_index;
+  int measurement_count;
+
+  DetectionObject()
+  {
+    id = -1;
+    cx = 0;
+    cy = 0;
+    frame_width = 0;
+    frame_height = 0;
+    // detection state
+    frame_detected = false;
+    frame_has_appeared = false;
+    no_detection_count = 0;
+    // image ray (ie 3d vector) variables
+    ray = cv::Point3d(0, 0, 0);
+    azimuth = 0;
+    elevation = 0;
+    // range estimation variables
+    range = 0;
+    prev_range = 0;
+    range_rate = 0;
+    prev_range_rate = 0;
+    measurements_index = 0;
+    measurement_count = 0;
+  }
+};
+
+/************** END *******************/
+
+
 /************** Section 1: Functions for processing the point cloud ************/
 void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
 {
