@@ -39,7 +39,8 @@
 #define MAX_RANGE_RATE 50 // m/s
 #define MAX_NO_DETECTION_COUNT 10
 #define MEASUREMENT_LIST_LENGTH 5
-#define RANGE_MEASUREMENT_AVERAGE_DIFF_TOL 2 
+#define RANGE_MEASUREMENT_AVERAGE_DIFF_TOL 2
+#define DEFAULT_RANGE_RATE -1.0 
 
 int frame_center_X = 320;
 int frame_center_Y = 150;
@@ -127,11 +128,16 @@ float calculate_distance(pcl::PointXYZ p1, pcl::PointXYZ p2)
 }
 
 int get_list_of_distances(std::vector<double> &distances_out,
-													cv::Point3d camera_position, pcl::PointXYZ origin, double ray_elevation, double ray_bearing,
+													cv::Point3d camera_position,
+													pcl::PointXYZ origin,
+													double ray_elevation,
+													double ray_bearing,
 													pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
 {
 	std::vector<double> distances(0);
+	std::vector<double> distances_2(0);
 	int count = 0;
+	int count_2 = 0;
 	int num_points = cloud_filtered->points.size();
 
 	for(int i = 0; i < num_points; i++)
@@ -160,11 +166,22 @@ int get_list_of_distances(std::vector<double> &distances_out,
 		{
 			distances.push_back(distance);
 			count++;
+		} else if (bearing_diff <= 2*bearing_tolerance && distance > 0.01 && z > MIN_Z && z < MAX_Z) {
+			distances_2.push_back(distance);
+			count_2++;
 		}
   }
+	int final_count = count;
 	// generate sorted list of points
-	std::sort (distances.begin(), distances.end());
-	distances_out = distances;
+	if(count > 0) {
+		std::sort (distances.begin(), distances.end());
+		distances_out = distances;
+	} else if (count_2 > 0) {
+		std::sort (distances_2.begin(), distances_2.end());
+		distances_out = distances_2;
+		final_count = count_2;
+		std::printf("loosened tolerance to find enough points \n");
+	}
 	// print distances
 	/*std::printf("sorted distance list \n");
 	std::printf("%i points\n", count);
@@ -172,7 +189,7 @@ int get_list_of_distances(std::vector<double> &distances_out,
 	{
 		std::printf("%f,", distances[i]);
 	}*/
-	return count;
+	return final_count;
 }
 
 double estimate_distance_from_histogram(std::vector<double>& distances)
@@ -413,38 +430,42 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	
 	measurements_index = (measurements_index + 1) % MEASUREMENT_LIST_LENGTH;
 	measurements[measurements_index] = measured_range;
-	if(measurement_count < 5 && measured_range != 0)
+	if(measurement_count < MEASUREMENT_LIST_LENGTH && measured_range != 0)
 	{
 		measurement_count++;
 	}
 	
 	double range_estimation = measured_range;
 	double range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
-	if(prev_range == 0) {
-		range_rate = 0;
-	}
-	if(std::abs(range_rate) > MAX_RANGE_RATE){
-		range_rate = prev_range_rate;
-	}
 
-	if(range_rate != 0 && measurement_count >= 5)
+	if(prev_range == 0) {
+		range_rate = DEFAULT_RANGE_RATE;
+	}
+	predicted_range = prev_range + prev_range_rate * LIDAR_DATA_PERIOD_S;
+
+	if(range_rate != 0)
 	{
-		predicted_range = prev_range + prev_range_rate * LIDAR_DATA_PERIOD_S;
 		double average_of_prev_measurements = calculate_average(measurements, measurement_count);
-		double measurement_diff_with_average = abs(average_of_prev_measurements - measured_range);	
+		double measurement_diff_with_average = abs(average_of_prev_measurements - measured_range);
 		double diff_bt_predicted_and_measured = std::abs(predicted_range - measured_range);
 
 		if(std::abs(range_rate) > MAX_RANGE_RATE) // || (diff_bt_predicted_and_measured *LIDAR_DATA_RATE_HZ) > MAX_RANGE_RATE
 		{
-			if(measurement_diff_with_average < RANGE_MEASUREMENT_AVERAGE_DIFF_TOL)
+			if(measurement_count >= MEASUREMENT_LIST_LENGTH) 
 			{
-				printf("readjusting to new range baseline\n");
-				prev_range = average_of_prev_measurements;
-				range_rate = range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
+				if(measurement_diff_with_average < RANGE_MEASUREMENT_AVERAGE_DIFF_TOL)
+				{
+					printf("readjusting to new range baseline\n");
+					prev_range = average_of_prev_measurements;
+					range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
+				} else {
+					std::printf("invalid range rate %f / distance estimation %f \n",range_rate, measured_range);
+					range_rate = prev_range_rate;
+					range_estimation = predicted_range;
+				}
 			} else {
-				std::printf("invalid range rate %f / distance estimation %f \n",range_rate, measured_range);
+				std::printf("invalid range rate %f \n", range_rate);
 				range_rate = prev_range_rate;
-				range_estimation = predicted_range;
 			}
 		}
 	}
@@ -482,8 +503,8 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	std::printf("range_estimation: %f \t", range_estimation);
 	std::printf("predicted_range: %f \t", predicted_range);
 	std::printf("range rate: %f \t", range_rate);
-	std::printf("camera x,y : (%i , %i) \t", frame_center_X, frame_center_Y);
-	std::printf("frame detected : %i \t", frame_detected);
+	//std::printf("camera x,y : (%i , %i) \t", frame_center_X, frame_center_Y);
+	//std::printf("frame detected : %i \t", frame_detected);
 	std::printf("measurement count : %i \n", measurement_count);
 	// Publish info for CAN bus
 	// Long range
@@ -520,15 +541,15 @@ void frame_cb(const geometry_msgs::Pose2D& pose_msg)
 
 void frame_detected_cb(const std_msgs::Bool& frame_detected_msg)
 {
-	if(frame_detected_msg.data)
+	frame_detected = (frame_detected_msg.data == true);
+	if(frame_detected)
 	{
-		frame_detected = true;
 		frame_has_appeared = true;
-	} else {
-		frame_detected = false;
+	} else if(frame_has_appeared) {
 		no_detection_count++;
 		if(no_detection_count > MAX_NO_DETECTION_COUNT)
 		{
+			std::printf("lost the detection\n");
 			frame_has_appeared = false;
 			no_detection_count = 0;
 			measurement_count = 0;
