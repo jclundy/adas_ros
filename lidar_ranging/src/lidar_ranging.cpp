@@ -49,8 +49,10 @@ cv::Point3d camera_position = cv::Point3d(-1.872, 0.0, 0.655);
 pcl::PointXYZ origin = pcl::PointXYZ(0,0,0);
 double theta_y = 0.02;
 double MIN_Z = 0.1;
-double MAX_Z = 4;
-double BEARING_TOL = 0.0174533;
+double MAX_Z = 3;
+double BEARING_TOL = 0.014;
+
+int num_detection_objects = 0;
 
 //publishers
 ros::Publisher pub;
@@ -70,7 +72,7 @@ pcl::PassThrough<pcl::PointXYZ> pass;
 pcl::VoxelGrid<pcl::PointXYZ> sor;
 
 double estimate_distance(cv::Point3d, double, double, cv::Point3d, pcl::PointXYZ, pcl::PointCloud<pcl::PointXYZ>::Ptr);
-double calculate_average(std::vector<double>, int);
+double calculate_average(double[], int);
 /************** Section 0: detection object class definition *******************/
 class DetectionObject
 {
@@ -97,7 +99,7 @@ class DetectionObject
   double lateral_range;
   int relative_lane;
   unsigned int measurements_index;  
-  std::vector<double> measurements;
+  double measurements[MEASUREMENT_LIST_LENGTH];
   int measurement_count;
   
   DetectionObject()
@@ -122,9 +124,11 @@ class DetectionObject
     prev_range_rate = 0;
     lateral_range = 0;
     relative_lane = 0;
-    measurements.reserve(MEASUREMENT_LIST_LENGTH);
     measurements_index = 0;
     measurement_count = 0;
+    for (int i = 0; i < MEASUREMENT_LIST_LENGTH; i++) {
+      measurements[i] = 0;
+    }
   }
 
   void update_detection_state(bool frame_detected_state)
@@ -197,13 +201,12 @@ class DetectionObject
     range = measured_range;
     range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
 
-    measurements_index = (measurements_index + 1) % MEASUREMENT_LIST_LENGTH;
     measurements[measurements_index] = measured_range;
     if(measurement_count < MEASUREMENT_LIST_LENGTH && measured_range != 0)
     {
 	    measurement_count++;
     }
-
+    measurements_index = (measurements_index + 1) % MEASUREMENT_LIST_LENGTH;
     filter_range_estimation(measured_range);
     prev_range_rate = range_rate;
     prev_range = range;
@@ -230,14 +233,12 @@ class DetectionObject
 
 	  if(range_rate != 0)
 	  {
-		  double average_of_prev_measurements = calculate_average(measurements, measurement_count);
-		  double measurement_diff_with_average = abs(average_of_prev_measurements - measured_range);
-		  double diff_bt_predicted_and_measured = std::abs(predicted_range - measured_range);
-
 		  if(std::abs(range_rate) > MAX_RANGE_RATE)
 		  {
 			  if(measurement_count >= MEASUREMENT_LIST_LENGTH)
 			  {
+          double average_of_prev_measurements = calculate_average(measurements, MEASUREMENT_LIST_LENGTH);
+          double measurement_diff_with_average = abs(average_of_prev_measurements - measured_range);
 				  if(measurement_diff_with_average < RANGE_MEASUREMENT_AVERAGE_DIFF_TOL)
 				  {
 					  std::printf("readjusting to new range baseline\n");
@@ -456,7 +457,7 @@ double estimate_distance(cv::Point3d ray,
 	return distance;
 }
 
-double calculate_average(std::vector<double> measurements, int count)
+double calculate_average(double measurements[], int count)
 {
 	double average = 0;
 	for (int i = 0; i < count; i++) {
@@ -564,23 +565,24 @@ void log_range_data(DetectionObject detection_object)
 	std::printf("measurement count : %i \n", detection_object.measurement_count);
 }
 
-void publish_can_data(std::vector<DetectionObject> detection_objects)
+//void publish_can_data(std::vector<DetectionObject> detection_objects)
+void publish_can_data(unsigned int index)
 {
  	// Long range
 	std_msgs::Float32 dist_msg;
-	dist_msg.data = detection_objects[0].range;
+	dist_msg.data = detection_objects[index].range;
 	distancePub.publish(dist_msg);
 	// Azimuth
 	std_msgs::Float32 azimuth_msg;
-	azimuth_msg.data = detection_objects[0].azimuth;
+	azimuth_msg.data = detection_objects[index].azimuth;
 	azimuth_pub.publish(azimuth_msg);
 	// lateral range
 	std_msgs::Float32 lateral_msg;
-	lateral_msg.data = detection_objects[0].lateral_range;
+	lateral_msg.data = detection_objects[index].lateral_range;
 	lateral_distance_pub.publish(lateral_msg);
   // relative lane
 	std_msgs::Int32 lane_msg;
-	lane_msg.data = detection_objects[0].relative_lane;
+	lane_msg.data = detection_objects[index].relative_lane;
 	relative_lane_pub.publish(lane_msg);
   
 }
@@ -603,13 +605,13 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
   if(!detection_objects[0].frame_has_appeared) return;
   // calculate ray from pixel position of detected vehicle
   detection_objects[0].update_ray(cam_model_,theta_y);
-
   // 3. Get range estimation
   detection_objects[0].estimate_range(camera_position, origin, cloud_filtered);
   // Log estimated distance
   log_range_data(detection_objects[0]);
   // Visualize range estimation
-  visualize_ray(detection_objects[0], marker_pub);
+  //std::printf("visualizing ray\n");
+  //visualize_ray(detection_objects[0], marker_pub);
 
   // 4. Publish data
 	// Publish point cloud	
@@ -617,7 +619,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	pcl::toROSMsg(*cloud_filtered, output);
 	pub.publish (output);
 	// Publish info for CAN bus
-  publish_can_data(detection_objects);
+  publish_can_data(num_detection_objects);
 }
 
 void frame_cb(const geometry_msgs::Pose2D& pose_msg)
@@ -660,11 +662,10 @@ int main (int argc, char** argv)
   ros::init (argc, argv, "lidar_ranging");
   ros::NodeHandle nh;
 
-  std::printf("initailzing detection object");
+  std::printf("initialzing detection object \n");
   DetectionObject detectionObject_0;
   detection_objects.reserve(1);
   detection_objects[0] = detectionObject_0;
-  std::printf("id %f, range %f",detection_objects[0].id, detection_objects[0].range);
 	
   // Create a ROS subscriber for the input point cloud
   ros::Subscriber sub = nh.subscribe ("/velodyne_points", 1, cloud_cb);
