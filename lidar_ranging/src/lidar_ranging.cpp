@@ -40,7 +40,7 @@
 #define MAX_NO_DETECTION_COUNT 10
 #define MEASUREMENT_LIST_LENGTH 5
 #define RANGE_MEASUREMENT_AVERAGE_DIFF_TOL 2
-#define DEFAULT_RANGE_RATE -1.0 
+#define DEFAULT_RANGE_RATE -1.0
 
 int frame_center_X = 320;
 int frame_center_Y = 150;
@@ -61,7 +61,6 @@ ros::Time prev_time;
 ros::Time current_time;
 ros::Time start_time;
 int range_measurements = 0;
-
 
 cv::Point3d camera_position = cv::Point3d(-1.872, 0.0, 0.655);
 pcl::PointXYZ origin = pcl::PointXYZ(0,0,0);
@@ -94,6 +93,7 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered (new pcl::PointCloud<pcl::Poi
 pcl::PassThrough<pcl::PointXYZ> pass;
 pcl::VoxelGrid<pcl::PointXYZ> sor;
 
+/************** Section 1: Functions for processing the point cloud ************/
 void apply_passthrough_filter(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
 {
 	pass.setInputCloud (cloud);
@@ -118,7 +118,9 @@ void downsample(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::
   sor.setLeafSize (0.03f, 0.03f, 0.03f);
   sor.filter (*cloud_filtered);
 }
+/**************************** END *******************************************/
 
+/************** Section 2: Functions for distance estimation ************/
 float calculate_distance(pcl::PointXYZ p1, pcl::PointXYZ p2)
 {
 	float dx = p1.x - p2.x;
@@ -182,13 +184,6 @@ int get_list_of_distances(std::vector<double> &distances_out,
 		final_count = count_2;
 		std::printf("loosened tolerance to find enough points \n");
 	}
-	// print distances
-	/*std::printf("sorted distance list \n");
-	std::printf("%i points\n", count);
-	for(int i = 0; i < count; i++)
-	{
-		std::printf("%f,", distances[i]);
-	}*/
 	return final_count;
 }
 
@@ -225,17 +220,6 @@ double estimate_distance_from_histogram(std::vector<double>& distances)
 			winning_count = bin_count[i];
 		}
 	}
-	// print histogram
-	/*std::printf("Histogram \n");
-	int winning_bin_index = 0;
-	for(int i = 0; i < num_bins; i++)
-	{
-		if(bin_count[i] > 0)
-		{
-			double distance = i * bin_width + min_distance;
-			std::printf("distance: %f, count %i \n", distance, bin_count[i]);
-		}
-	}*/
 	double winning_distance = bin_averages[winning_index];
 	return winning_distance;
 }
@@ -300,6 +284,114 @@ geometry_msgs::Point convert_cv_point_to_geometry_msgs(cv::Point3d point)
 	return point_msg;
 }
 
+double estimate_distance(cv::Point3d ray,
+													double prev_distance,
+													double range_rate,
+													cv::Point3d camera_position,
+													pcl::PointXYZ origin,
+													pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
+{
+	double lidar_elevation = ray.z / ray.x;
+	double lidar_bearing = ray.y / ray.x;
+  // iterate through point cloud by index
+	std::vector<double> distances(0);
+	// project ray onto xy plane, by setting camera_position = origin
+	cv::Point3d lidar_position = cv::Point3d(0.0, 0.0, 0.0);
+	int count = get_list_of_distances(distances, lidar_position, origin, lidar_elevation, lidar_bearing, cloud_filtered);
+
+	double distance = prev_distance + range_rate * LIDAR_DATA_PERIOD_S;
+	if(count > 0)
+	{
+		distance = estimate_distance_from_histogram(distances);
+	} else {
+		std::printf("no points detected, estimating based on range rate \n");
+	}
+	return distance;
+}
+
+double calculate_average(std::vector<double> measurements, int count)
+{
+	double average = 0;
+	for (int i = 0; i < count; i++) {
+		average += measurements[i];
+	}
+	return average/double(count);
+}
+
+void get_filtered_range_estimation(double measured_range,
+                                   double &range_estimation,
+                                   double prev_range,
+                                   double &range_rate,
+                                   double prev_range_rate,
+                                   std::vector<double> measurements,
+                                   int measurement_count)
+{
+	if(prev_range == 0) {
+		range_rate = DEFAULT_RANGE_RATE;
+	}
+	double predicted_range = prev_range + prev_range_rate * LIDAR_DATA_PERIOD_S;
+
+	if(range_rate != 0)
+	{
+		double average_of_prev_measurements = calculate_average(measurements, measurement_count);
+		double measurement_diff_with_average = abs(average_of_prev_measurements - measured_range);
+		double diff_bt_predicted_and_measured = std::abs(predicted_range - measured_range);
+
+		if(std::abs(range_rate) > MAX_RANGE_RATE)
+		{
+			if(measurement_count >= MEASUREMENT_LIST_LENGTH)
+			{
+				if(measurement_diff_with_average < RANGE_MEASUREMENT_AVERAGE_DIFF_TOL)
+				{
+					printf("readjusting to new range baseline\n");
+					prev_range = average_of_prev_measurements;
+					range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
+				} else {
+					std::printf("invalid range rate %f / distance estimation %f \n",range_rate, measured_range);
+					range_rate = prev_range_rate;
+					range_estimation = predicted_range;
+				}
+			} else {
+				std::printf("invalid range rate %f \n", range_rate);
+				range_rate = prev_range_rate;
+			}
+		}
+	}
+}
+
+void get_measured_range(double &range_estimation,
+                          double &range_rate,
+                          cv::Point3d ray,
+                          double &prev_range,
+                          double &prev_range_rate,
+                          cv::Point3d camera_position,
+                          pcl::PointXYZ origin,
+                          pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered,
+                          std::vector<double> &measurements,
+                          int &measurements_index,
+                          int &measurement_count)
+{
+  double measured_range = estimate_distance(ray, prev_range, prev_range_rate, camera_position, origin, cloud_filtered);
+  range_estimation = measured_range;
+	range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
+
+  // TODO measurements_index should be in a vector...
+	measurements_index = (measurements_index + 1) % MEASUREMENT_LIST_LENGTH;
+	measurements[measurements_index] = measured_range;
+	if(measurement_count < MEASUREMENT_LIST_LENGTH && measured_range != 0)
+	{
+		measurement_count++;
+	}
+
+  get_filtered_range_estimation(measured_range, range_estimation, prev_range, range_rate, prev_range_rate, measurements, measurement_count);
+	prev_range_rate = range_rate;
+	prev_range = range_estimation;
+}
+
+/**************************** END *******************************************/
+
+
+/************** Section 3: Functions for the distance estimation ************/
 void draw_line(cv::Point3d start_point, cv::Point3d end_point, ros::Publisher marker_pub, double line_r, double line_g, double line_b, std::string name)
 {
 		std::string frame_id = "velodyne";
@@ -370,45 +462,26 @@ double draw_search_boundaries(cv::Point3d ray, cv::Point3d start_point, double r
 	draw_line(start_point, right_end_point, marker_pub, 1.0, 0.0, 0.0, "offset_right_ray");
 }
 
-double estimate_distance(cv::Point3d ray, 
-													double prev_distance,
-													double range_rate,
-													cv::Point3d camera_position, 
-													pcl::PointXYZ origin,
-													pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
+void visualize_ray(cv::Point3d ray, double range_estimation, ros::Publisher marker_pub)
 {
-	double lidar_elevation = ray.z / ray.x;
-	double lidar_bearing = ray.y / ray.x;
-		
-  // iterate through point cloud by index
-	std::vector<double> distances(0);
-	
-	// project ray onto xy plane, by setting camera_position = origin
-	// 
-	cv::Point3d lidar_position = cv::Point3d(0.0, 0.0, 0.0);
-	int count = get_list_of_distances(distances, lidar_position, origin, lidar_elevation, lidar_bearing, cloud_filtered);
+   // modified line
+	cv::Point3d projected_ray_xy_plane = cv::Point3d(ray.x, ray.y, 0);
+	// Draw projected ray
+	cv::Point3d lidar_position = cv::Point3d(0, 0, 0);
+	cv::Point3d end_point_50m = calculate_endpoint(projected_ray_xy_plane,lidar_position, 50);
 
-	double distance = prev_distance + range_rate * LIDAR_DATA_PERIOD_S;
-	if(count > 0) 
-	{
-		distance = estimate_distance_from_histogram(distances);
-	} else {
-		std::printf("no points detected, estimating based on range rate \n");
-	}
-	return distance;
+	draw_line(lidar_position, end_point_50m, marker_pub, 0.0, 0.0, 1.0, "points_and_lines_50m");
+	cv::Point3d end_point = calculate_endpoint(projected_ray_xy_plane,lidar_position, range_estimation);
+	draw_line(lidar_position, end_point, marker_pub, 1.0, 0.0, 0.0, "points_and_lines");
+	draw_search_boundaries(projected_ray_xy_plane, lidar_position, 50, BEARING_TOL, marker_pub);
 }
+/**************************** END *******************************************/
 
-double calculate_average(std::vector<double> measurements, int count)
-{
-	double average = 0;
-	for (int i = 0; i < count; i++) {
-		average += measurements[i];
-	}
-	return average/double(count);
-}
 
+/************** Section 4: callback functions ********************************/
 void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 {
+  // 1. Process Point Cloud
 	// Convert message to pcl::PointCloud type
 	pcl::fromROSMsg (*input, *cloud);
 	// Apply passthrough filter
@@ -419,78 +492,31 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	if(!cam_model_.initialized()) return;
 	if(!frame_has_appeared) return;
 	
-	cv::Point3d ray = calculate_ray(frame_center_X, frame_center_Y, cam_model_,theta_y);	
-  double measured_range = estimate_distance(ray, 
-													prev_range,
-													prev_range_rate,
-													camera_position, 
-													origin, 
-													cloud_filtered);
+  // 2. Process image frame
+  // TODO get vector of rays
+	cv::Point3d ray = calculate_ray(frame_center_X, frame_center_Y, cam_model_,theta_y);
+ 
+  // 3. Get range estimation
+  // TODO should be a vector of ranges
+  double range_rate = prev_range_rate;
+  double range_estimation = prev_range;
+  get_measured_range(range_estimation, range_rate, ray, prev_range, prev_range_rate, camera_position, origin, cloud_filtered, measurements, measurements_index, measurement_count);
 
-	
-	measurements_index = (measurements_index + 1) % MEASUREMENT_LIST_LENGTH;
-	measurements[measurements_index] = measured_range;
-	if(measurement_count < MEASUREMENT_LIST_LENGTH && measured_range != 0)
-	{
-		measurement_count++;
-	}
-	
-	double range_estimation = measured_range;
-	double range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
+  // 4. Visualize range estimation
+  visualize_ray(ray, range_estimation, marker_pub);
+  // Log estimated distance
+	std::printf("range_estimation: %f \t", range_estimation);
+	std::printf("range rate: %f \t", range_rate);
+	std::printf("camera x,y : (%i , %i) \t", frame_center_X, frame_center_Y);
+	std::printf("frame detected : %i \t", frame_detected);
+	std::printf("measurement count : %i \n", measurement_count);
 
-	if(prev_range == 0) {
-		range_rate = DEFAULT_RANGE_RATE;
-	}
-	predicted_range = prev_range + prev_range_rate * LIDAR_DATA_PERIOD_S;
-
-	if(range_rate != 0)
-	{
-		double average_of_prev_measurements = calculate_average(measurements, measurement_count);
-		double measurement_diff_with_average = abs(average_of_prev_measurements - measured_range);
-		double diff_bt_predicted_and_measured = std::abs(predicted_range - measured_range);
-
-		if(std::abs(range_rate) > MAX_RANGE_RATE) // || (diff_bt_predicted_and_measured *LIDAR_DATA_RATE_HZ) > MAX_RANGE_RATE
-		{
-			if(measurement_count >= MEASUREMENT_LIST_LENGTH) 
-			{
-				if(measurement_diff_with_average < RANGE_MEASUREMENT_AVERAGE_DIFF_TOL)
-				{
-					printf("readjusting to new range baseline\n");
-					prev_range = average_of_prev_measurements;
-					range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
-				} else {
-					std::printf("invalid range rate %f / distance estimation %f \n",range_rate, measured_range);
-					range_rate = prev_range_rate;
-					range_estimation = predicted_range;
-				}
-			} else {
-				std::printf("invalid range rate %f \n", range_rate);
-				range_rate = prev_range_rate;
-			}
-		}
-	}
-
-	prev_range_rate = range_rate;
-	prev_range = range_estimation;
-
-	// TODO CORRECT THE MATH
+  // 5. Publish data
 	double lidar_elevation = ray.z / ray.x;
 	double lidar_bearing = ray.y / ray.x;
 	double lateral_range = std::sin(lidar_bearing) * range_estimation;
 	geometry_msgs::PointStamped estimated_point;
-	estimated_point.point = spherical_to_cartesian(range_estimation, lidar_elevation, lidar_bearing);	
-	// END of TODO
-
-	// modified line
-	cv::Point3d projected_ray_xy_plane = cv::Point3d(ray.x, ray.y, 0);
-	// Draw projected ray
-	cv::Point3d lidar_position = cv::Point3d(0, 0, 0);
-	cv::Point3d end_point_50m = calculate_endpoint(projected_ray_xy_plane,lidar_position, 50);
-
-	draw_line(lidar_position, end_point_50m, marker_pub, 0.0, 0.0, 1.0, "points_and_lines_50m");
-	cv::Point3d end_point = calculate_endpoint(projected_ray_xy_plane,lidar_position, range_estimation);
-	draw_line(lidar_position, end_point, marker_pub, 1.0, 0.0, 0.0, "points_and_lines");
-	draw_search_boundaries(projected_ray_xy_plane, lidar_position, 50, BEARING_TOL, marker_pub);
+	estimated_point.point = spherical_to_cartesian(range_estimation, lidar_elevation, lidar_bearing);
 
 	// Publish estimated point
 	pointPublisher.publish(estimated_point);
@@ -499,13 +525,6 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	pcl::toROSMsg(*cloud_filtered, output);
 	pub.publish (output);
 
-	// Log estimated distance
-	std::printf("range_estimation: %f \t", range_estimation);
-	std::printf("predicted_range: %f \t", predicted_range);
-	std::printf("range rate: %f \t", range_rate);
-	//std::printf("camera x,y : (%i , %i) \t", frame_center_X, frame_center_Y);
-	//std::printf("frame detected : %i \t", frame_detected);
-	std::printf("measurement count : %i \n", measurement_count);
 	// Publish info for CAN bus
 	// Long range
 	std_msgs::Float32 dist_msg;
@@ -520,7 +539,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	lateral_msg.data = lateral_range;
 	lateral_distance_pub.publish(lateral_msg);
 
-	// hacky lane detection
+  // 6. Lane Detection
 	std_msgs::Int32 lane_msg;
 	lane_msg.data = 2;
 	if(lateral_range < -2)
@@ -569,6 +588,9 @@ void camera_cb(const sensor_msgs::CameraInfoConstPtr& info_msg)
   }
 }
 
+/**************************** END *******************************************/
+
+/**************************** Main function *******************************************/
 int main (int argc, char** argv)
 {
 	std::printf("running lidar ranging\n");
@@ -612,3 +634,4 @@ int main (int argc, char** argv)
 	// Spin
   ros::spin ();
 }
+/**************************** END *******************************************/
