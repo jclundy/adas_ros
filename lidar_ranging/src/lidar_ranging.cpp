@@ -1,8 +1,12 @@
 #include <ros/ros.h>
 // ROS message types
+#include <std_msgs/MultiArrayLayout.h>
+#include <std_msgs/MultiArrayDimension.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
+#include <std_msgs/Float32MultiArray.h>
 #include <std_msgs/Int32.h>
+#include <std_msgs/Int32MultiArray.h>
 #include <visualization_msgs/Marker.h>
 #include <geometry_msgs/Pose2D.h>
 #include <geometry_msgs/PointStamped.h>
@@ -552,23 +556,38 @@ void log_range_data(DetectionObject detection_object)
 	std::printf("measurement count : %i \n", detection_object.measurement_count);
 }
 
-void publish_can_data(unsigned int index)
+void publish_can_data()
 {
- 	// Long range
-	std_msgs::Float32 dist_msg;
-	dist_msg.data = detection_objects[index].range;
+  std_msgs::MultiArrayLayout layout = std_msgs::MultiArrayLayout();
+  layout.dim.push_back(std_msgs::MultiArrayDimension());
+  layout.dim[0].size = detection_objects.size();
+  layout.dim[0].stride = 1;
+  layout.dim[0].label = "length";
+
+  std_msgs::Float32MultiArray dist_msg;
+  dist_msg.layout = layout;  
+  std_msgs::Float32MultiArray azimuth_msg;
+  azimuth_msg.layout = layout;
+  std_msgs::Float32MultiArray lateral_msg;
+  lateral_msg.layout = layout;
+  std_msgs::Int32MultiArray lane_msg;
+  lane_msg.layout = layout;
+  
+  for (int i = 0; i < detection_objects.size(); i++)
+  {
+    dist_msg.data.push_back(detection_objects[i].range);
+    azimuth_msg.data.push_back(detection_objects[i].azimuth);
+    lateral_msg.data.push_back(detection_objects[i].lateral_range);
+    lane_msg.data.push_back(detection_objects[i].relative_lane);
+  }
+  
+  // Long range
 	distancePub.publish(dist_msg);
 	// Azimuth
-	std_msgs::Float32 azimuth_msg;
-	azimuth_msg.data = detection_objects[index].azimuth;
 	azimuth_pub.publish(azimuth_msg);
 	// lateral range
-	std_msgs::Float32 lateral_msg;
-	lateral_msg.data = detection_objects[index].lateral_range;
 	lateral_distance_pub.publish(lateral_msg);
   // relative lane
-	std_msgs::Int32 lane_msg;
-	lane_msg.data = detection_objects[index].relative_lane;
 	relative_lane_pub.publish(lane_msg);
   
 }
@@ -607,7 +626,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	pub.publish (output);
 	// Publish info for CAN bus
   int object_index = 0;
-  publish_can_data(object_index);
+  publish_can_data();
 }
 
 void frame_cb(const geometry_msgs::Pose2D& pose_msg)
@@ -671,12 +690,13 @@ int main (int argc, char** argv)
 	ros::Subscriber frame_center_sub = nh.subscribe("/darknet_ros/frame_center",1,frame_cb);
 	ros::Subscriber frame_detected_sub = nh.subscribe("/darknet_ros/frame_detected",1,frame_detected_cb);
   
-	distancePub = nh.advertise<std_msgs::Float32>("/lidar_ranging/distance",1);
-	azimuth_pub = nh.advertise<std_msgs::Float32>("/lidar_ranging/azimuth",1);
-	lateral_distance_pub = nh.advertise<std_msgs::Float32>("/lidar_ranging/lateral_distance",1);
-	relative_lane_pub = nh.advertise<std_msgs::Int32>("/lidar_ranging/relative_lane",1);
+	distancePub = nh.advertise<std_msgs::Float32MultiArray>("/lidar_ranging/distance",1);
+	azimuth_pub = nh.advertise<std_msgs::Float32MultiArray>("/lidar_ranging/azimuth",1);
+	lateral_distance_pub = nh.advertise<std_msgs::Float32MultiArray>("/lidar_ranging/lateral_distance",1);
+	relative_lane_pub = nh.advertise<std_msgs::Int32MultiArray>("/lidar_ranging/relative_lane",1);
+
 	marker_pub = nh.advertise<visualization_msgs::Marker>("visualization_marker", 10);
 	// Spin
-  ros::spin ();
+  ros::spin();
 }
 /**************************** END *******************************************/

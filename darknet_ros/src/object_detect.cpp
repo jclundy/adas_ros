@@ -2,7 +2,9 @@
 #include <ros/package.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
+#include <std_msgs/Float32MultiArray.h>
 #include <std_msgs/Int32.h>
+#include <std_msgs/Int32MultiArray.h>
 #include <geometry_msgs/Pose2D.h>
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
@@ -461,19 +463,19 @@ void imageCallback(const sensor_msgs::ImageConstPtr msg)
     waitKey(1);
 }
 
-void distance_cb(const std_msgs::Float32& msg_data)
+void distance_cb(const std_msgs::Float32MultiArray& msg_data)
 {
-	range = msg_data.data;
+	range = msg_data.data[0];
 }
 
-void range_rate_cb(const std_msgs::Float32& msg_data)
+void range_rate_cb(const std_msgs::Float32MultiArray& msg_data)
 {
-	range_rate = msg_data.data;
+	range_rate = msg_data.data[0];
 }
 
-void relative_lane_cb(const std_msgs::Int32& msg_data)
+void relative_lane_cb(const std_msgs::Int32MultiArray& msg_data)
 {
-	relative_lane = msg_data.data;
+	relative_lane = msg_data.data[0];
 }
 
 int main(int argc, char **argv)
