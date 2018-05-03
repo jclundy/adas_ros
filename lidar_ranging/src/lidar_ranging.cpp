@@ -168,13 +168,17 @@ class DetectionObject
 
   void update_ray(image_geometry::PinholeCameraModel cam_model_, double theta_y)
   {
+    
+    //int modified_cx = 620 - cx;
+    //if(modified_cx < 0) modified_cx = 0;
+    
     cv::Point2d frame_center = cv::Point2d(cx, cy);
 	  cv::Point3d camera_ray = cam_model_.projectPixelTo3dRay(frame_center);
 	
 	  // convert camera coordinate system to vlp-16 coordinate system convention
 	  double ray_world_x = camera_ray.z;
 	  double ray_world_z = camera_ray.y;
-	  double ray_world_y = camera_ray.x;
+	  double ray_world_y = -camera_ray.x; // -ve so that the resulting azimuth is not mirrored in the real world
 
 	  // apply rotation
 	  ray.x = std::cos(theta_y)*ray_world_x + std::sin(theta_y)*ray_world_z;
@@ -182,8 +186,8 @@ class DetectionObject
 	  ray.y = ray_world_y;
     
     //update azimuth and bearing    
-    azimuth = ray.y / ray.x;
-    elevation = ray.z / ray.x;
+    azimuth = std::atan(ray.y / ray.x);
+    elevation = std::atan(ray.z / ray.x);
   }
   
   void update_lateral_range()
@@ -283,8 +287,9 @@ class DetectionObject
 	  std::printf("range_estimation: %f \t", range);
 	  std::printf("range rate: %f \t", range_rate);
 	  std::printf("camera x,y : (%i , %i) \t", cx, cy);
-	  std::printf("frame detected : %i \t", frame_detected);
-	  std::printf("measurement count : %i \n", measurement_count);
+    std::printf("azimuth: %f \t", azimuth);
+    std::printf("lane: %i \t", relative_lane);
+	  std::printf("frame detected : %i \n", frame_detected);
   }
 };
 
@@ -554,7 +559,7 @@ double draw_search_boundaries(cv::Point3d ray, cv::Point3d start_point, double r
 
 void visualize_ray(DetectionObject detection_object, ros::Publisher marker_pub)
 {
-   // modified line
+  // modified line
 	cv::Point3d projected_ray_xy_plane = cv::Point3d(detection_object.ray.x, detection_object.ray.y, 0);
 	// Draw projected ray
 	cv::Point3d lidar_position = cv::Point3d(0, 0, 0);
@@ -629,7 +634,10 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
   estimate_ranges_for_all_detected_objects(camera_position, origin, cloud_filtered);
   // Log estimated distance
   // Visualize range estimation
-  //visualize_ray(detection_objects[0], marker_pub);
+  if(detection_objects[0].frame_has_appeared)
+  {
+    visualize_ray(detection_objects[0], marker_pub);
+  }
 
   // 4. Publish data
 	// Publish point cloud	
