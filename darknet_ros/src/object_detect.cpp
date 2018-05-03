@@ -1,11 +1,17 @@
 #include <ros/ros.h>
 #include <ros/package.h>
+#include <std_msgs/MultiArrayLayout.h>
+#include <std_msgs/MultiArrayDimension.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
 #include <std_msgs/Float32MultiArray.h>
 #include <std_msgs/Int32.h>
 #include <std_msgs/Int32MultiArray.h>
+#include <std_msgs/Int8MultiArray.h>
 #include <geometry_msgs/Pose2D.h>
+#include <geometry_msgs/PoseArray.h>
+#include <geometry_msgs/Pose.h>
+#include <geometry_msgs/Point.h>
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
 #include "darknet_ros/DetectedObjects.h"
@@ -71,14 +77,17 @@ int relative_lane = 0;
 int frameCount = 0;
 std::chrono::duration<double> fps(17);
 
-int centerX = 0;
-int centerY = 0;
+int max_num_objects = 5;
+std::vector<int> centerX(max_num_objects,0);
+std::vector<int> centerY(max_num_objects,0);
+std::vector<int> frame_widths(max_num_objects,0);
+std::vector<bool> frame_is_detected(max_num_objects,false);
+
 
 int current_time;
 int prev_time;
 
 int not_detected_count = 0;
-bool frame_is_detected = false;
 bool new_detection_frame = false;
 
 int frame_width = 640;
@@ -89,6 +98,7 @@ VideoWriter outputVideo;
 const Scalar green(0,128,0);
 const Scalar yellow(0,255,255);
 const Scalar red(0,0,255);
+
 
 std::pair<darknet_ros::DetectedObjects, cv_bridge::CvImagePtr> detectImage(sensor_msgs::Image msg)
 {
@@ -139,16 +149,18 @@ std::pair<darknet_ros::DetectedObjects, cv_bridge::CvImagePtr> detectImage(senso
 		      int objId = 0;
 		      int leftTopX = 0, leftTopY = 0, rightBotX = 0,rightBotY = 0;
 		      tracked_ids.clear();
-		      for (objId = 0; objId < numObjects; objId++)
+          frame_widths.clear();
+		      for (objId = 0; (objId < numObjects) && (objId < max_num_objects); objId++)
 		      {
 		        if(labels[objId] == "bus" || labels[objId] == "car" || labels[objId] == "motorbike")
 		        {
 							not_detected_count = 0;        
-							frame_is_detected = true;
+							frame_is_detected[objId] = true;
 							new_detection_frame = true;
 				      
-							centerX = imageWidthPixels*boxes[objId].x;
-							centerY = imageHeightPixels*boxes[objId].y;
+							centerX[objId] = imageWidthPixels*boxes[objId].x;
+							centerY[objId] = imageHeightPixels*boxes[objId].y;
+              frame_widths[objId] = imageWidthPixels*boxes[objId].w;
 							//printf("image center: (%i, %i)\n",centerX, centerY);
 				        // Show labels
 				      if (labels[objId].c_str())
@@ -435,19 +447,30 @@ bool imageDetectionService(darknet_ros::ImageDetectionRequest &req, darknet_ros:
 void imageCallback(const sensor_msgs::ImageConstPtr msg)
 {
     std::pair<darknet_ros::DetectedObjects, cv_bridge::CvImagePtr> result = detectImage(*msg);
-		geometry_msgs::Pose2D frame_center;
-		frame_center.x = centerX;
-		frame_center.y = centerY;   
-		frameCenterPub.publish(frame_center);
-				
+		geometry_msgs::PoseArray frame_msg;
+
+    std_msgs::Int8MultiArray frameDetectedMsg;
+    std_msgs::MultiArrayLayout layout = std_msgs::MultiArrayLayout();
+    layout.dim.push_back(std_msgs::MultiArrayDimension());
+    layout.dim[0].size = max_num_objects;
+    layout.dim[0].stride = 1;
+    layout.dim[0].label = "length";
+
+    for(int i = 0; i < max_num_objects; i++) {
+      geometry_msgs::Pose detection_frame;
+      detection_frame.position.x = centerX[i];
+      detection_frame.position.y = centerY[i];
+      detection_frame.position.z = frame_widths[i];
+      frame_msg.poses.push_back(detection_frame);
+			frameDetectedMsg.data.push_back(frame_is_detected[i]);
+    }
+		frameDetectedPub.publish(frameDetectedMsg);
+		frameCenterPub.publish(frame_msg);
+    //reset frame_is_deteted to false for next iteration
+		for(int i = 0; i < max_num_objects; i++) {
+			frame_is_detected[i] = false;
+		}
 		
-		/*if(not_detected_count > 10) {
-			not_detected_count = 0;
-			frame_is_detected = false;
-		}*/
-		std_msgs::Bool frameDetectedMsg;
-		frameDetectedMsg.data =  new_detection_frame;		
-		frameDetectedPub.publish(frameDetectedMsg);	
 		
     objPub_.publish(result.first);
     imgPub_.publish(result.second->toImageMsg());
@@ -508,8 +531,8 @@ int main(int argc, char **argv)
   startWindowThread();
   
   objPub_ = nh.advertise<darknet_ros::DetectedObjects>( "/darknet_ros/detected_objects", 1);
-	frameCenterPub = nh.advertise<geometry_msgs::Pose2D>("/darknet_ros/frame_center",1);
-	frameDetectedPub = nh.advertise<std_msgs::Bool>("/darknet_ros/frame_detected",1);
+	frameCenterPub = nh.advertise<geometry_msgs::PoseArray>("/darknet_ros/frame_center",1);
+	frameDetectedPub = nh.advertise<std_msgs::Int8MultiArray>("/darknet_ros/frame_detected",1);
   std::string ros_path = ros::package::getPath("darknet_ros");
 
 	ros::Subscriber distance_sub = nh.subscribe("/lidar_ranging/distance",1,distance_cb);

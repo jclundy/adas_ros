@@ -2,13 +2,11 @@
 // ROS message types
 #include <std_msgs/MultiArrayLayout.h>
 #include <std_msgs/MultiArrayDimension.h>
-#include <std_msgs/Bool.h>
-#include <std_msgs/Float32.h>
 #include <std_msgs/Float32MultiArray.h>
-#include <std_msgs/Int32.h>
 #include <std_msgs/Int32MultiArray.h>
+#include <std_msgs/Int8MultiArray.h>
 #include <visualization_msgs/Marker.h>
-#include <geometry_msgs/Pose2D.h>
+#include <geometry_msgs/PoseArray.h>
 #include <geometry_msgs/PointStamped.h>
 #include <geometry_msgs/Point.h>
 #include <sensor_msgs/image_encodings.h>
@@ -45,6 +43,7 @@
 #define MEASUREMENT_LIST_LENGTH 5
 #define RANGE_MEASUREMENT_AVERAGE_DIFF_TOL 2
 #define DEFAULT_RANGE_RATE -1.0
+#define MAX_NUM_OBJECTS 5
 
 int frame_center_X = 320;
 int frame_center_Y = 150;
@@ -56,7 +55,7 @@ double MIN_Z = 0.1;
 double MAX_Z = 3;
 double AZIMUTH_TOL = 0.014;
 
-int num_detection_objects = 1;
+int num_detection_objects = MAX_NUM_OBJECTS;
 
 //publishers
 ros::Publisher pub;
@@ -157,12 +156,13 @@ class DetectionObject
 	  }
   }
   
-  void update_detection_frame(int x, int y)
+  void update_detection_frame(int x, int y, int w)
   {
     if(frame_detected)
 	  {
       cx = x;
 		  cy = y;
+			frame_width = w;
     }
   }
 
@@ -337,6 +337,7 @@ void estimate_ranges_for_all_detected_objects(cv::Point3d camera_position, pcl::
     // iterate through detection objects
     for (int j = 0; j < num_detection_objects; j++)
     {
+			if(!detection_objects[j].frame_has_appeared) continue;
       double ray_elevation = detection_objects[j].elevation;
       double ray_azimuth = detection_objects[j].azimuth;
       double elevation_diff = std::abs(ray_elevation - point_elevation);
@@ -612,13 +613,7 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	// Downsampling
 	//downsample(cloud_filtered, cloud_filtered);
 	
-  // 2. Process image frame
-  // stop further processing if nothing has been detected yet
-  if(!detection_objects[0].frame_has_appeared) return;
-  // calculate ray from pixel position of detected vehicle
-  detection_objects[0].update_ray(cam_model_,theta_y);
-
-  // 3. Get range estimations for all detection objects
+   // 3. Get range estimations for all detection objects
   estimate_ranges_for_all_detected_objects(camera_position, origin, cloud_filtered);
   // Log estimated distance
   log_range_data(detection_objects[0]);
@@ -635,14 +630,24 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
   publish_can_data();
 }
 
-void frame_cb(const geometry_msgs::Pose2D& pose_msg)
+void frame_cb(const geometry_msgs::PoseArray pose_msg)
 {
-  detection_objects[0].update_detection_frame(pose_msg.x, pose_msg.y);
+	for (int i=0; (i < pose_msg.poses.size()) && i < (MAX_NUM_OBJECTS); i++)
+	{
+		int x = pose_msg.poses[i].position.x;
+		int y = pose_msg.poses[i].position.y;
+		int w = pose_msg.poses[i].position.z;
+		detection_objects[i].update_detection_frame(x,y,w);
+		detection_objects[i].update_ray(cam_model_,theta_y);
+	}
 }
 
-void frame_detected_cb(const std_msgs::Bool& frame_detected_msg)
+void frame_detected_cb(const std_msgs::Int8MultiArray& frame_detected_msg)
 {
-	detection_objects[0].update_detection_state(frame_detected_msg.data);
+	for (int i = 0; (i < frame_detected_msg.data.size()) && i < (MAX_NUM_OBJECTS); i++)
+	{
+		detection_objects[i].update_detection_state(frame_detected_msg.data[i]);
+	}
 }
 
 void camera_cb(const sensor_msgs::CameraInfoConstPtr& info_msg)
@@ -677,8 +682,11 @@ int main (int argc, char** argv)
 
   std::printf("initializing detection object \n");
   DetectionObject detectionObject_0;
-  detection_objects.reserve(1);
-  detection_objects[0] = detectionObject_0;
+  detection_objects.reserve(MAX_NUM_OBJECTS);
+	for(int i = 0; i < MAX_NUM_OBJECTS;i ++)
+	{
+		detection_objects[i] = detectionObject_0;
+	}
 	
   // Create a ROS subscriber for the input point cloud
   ros::Subscriber sub = nh.subscribe ("/velodyne_points", 1, cloud_cb);
