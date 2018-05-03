@@ -61,6 +61,7 @@ int num_detection_objects = 1;
 //publishers
 ros::Publisher pub;
 ros::Publisher distancePub;
+ros::Publisher range_rate_pub;
 ros::Publisher azimuth_pub;
 ros::Publisher lateral_distance_pub;
 ros::Publisher relative_lane_pub;
@@ -560,12 +561,14 @@ void publish_can_data()
 {
   std_msgs::MultiArrayLayout layout = std_msgs::MultiArrayLayout();
   layout.dim.push_back(std_msgs::MultiArrayDimension());
-  layout.dim[0].size = detection_objects.size();
+  layout.dim[0].size = num_detection_objects;
   layout.dim[0].stride = 1;
   layout.dim[0].label = "length";
 
   std_msgs::Float32MultiArray dist_msg;
-  dist_msg.layout = layout;  
+  dist_msg.layout = layout;
+  std_msgs::Float32MultiArray range_rate_msg;
+  range_rate_msg.layout = layout;
   std_msgs::Float32MultiArray azimuth_msg;
   azimuth_msg.layout = layout;
   std_msgs::Float32MultiArray lateral_msg;
@@ -573,9 +576,10 @@ void publish_can_data()
   std_msgs::Int32MultiArray lane_msg;
   lane_msg.layout = layout;
   
-  for (int i = 0; i < detection_objects.size(); i++)
+  for (int i = 0; i < num_detection_objects; i++)
   {
     dist_msg.data.push_back(detection_objects[i].range);
+    range_rate_msg.data.push_back(detection_objects[i].range_rate);
     azimuth_msg.data.push_back(detection_objects[i].azimuth);
     lateral_msg.data.push_back(detection_objects[i].lateral_range);
     lane_msg.data.push_back(detection_objects[i].relative_lane);
@@ -583,6 +587,8 @@ void publish_can_data()
   
   // Long range
 	distancePub.publish(dist_msg);
+  // Range rate
+  range_rate_pub.publish(range_rate_msg);
 	// Azimuth
 	azimuth_pub.publish(azimuth_msg);
 	// lateral range
@@ -691,6 +697,7 @@ int main (int argc, char** argv)
 	ros::Subscriber frame_detected_sub = nh.subscribe("/darknet_ros/frame_detected",1,frame_detected_cb);
   
 	distancePub = nh.advertise<std_msgs::Float32MultiArray>("/lidar_ranging/distance",1);
+  range_rate_pub = nh.advertise<std_msgs::Float32MultiArray>("/lidar_ranging/range_rate",1);
 	azimuth_pub = nh.advertise<std_msgs::Float32MultiArray>("/lidar_ranging/azimuth",1);
 	lateral_distance_pub = nh.advertise<std_msgs::Float32MultiArray>("/lidar_ranging/lateral_distance",1);
 	relative_lane_pub = nh.advertise<std_msgs::Int32MultiArray>("/lidar_ranging/relative_lane",1);

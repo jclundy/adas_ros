@@ -465,17 +465,24 @@ void imageCallback(const sensor_msgs::ImageConstPtr msg)
 
 void distance_cb(const std_msgs::Float32MultiArray& msg_data)
 {
-	range = msg_data.data[0];
+  if(msg_data.data.size() > 0) {
+    range = msg_data.data[0];
+  }
+
 }
 
 void range_rate_cb(const std_msgs::Float32MultiArray& msg_data)
 {
-	range_rate = msg_data.data[0];
+  if(msg_data.data.size() > 0) {
+	  range_rate = msg_data.data[0];
+  }
 }
 
 void relative_lane_cb(const std_msgs::Int32MultiArray& msg_data)
 {
-	relative_lane = msg_data.data[0];
+  if(msg_data.data.size() > 0) {
+	  relative_lane = msg_data.data[0];
+  }
 }
 
 int main(int argc, char **argv)

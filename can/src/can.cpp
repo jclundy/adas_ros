@@ -329,27 +329,37 @@ void obj_id_cb(const std_msgs::Int32& info_msg)
 
 void distance_cb(const std_msgs::Float32MultiArray& info_msg)
 {
-	adas_signal_values[long_range] = info_msg.data[0];
+	if(info_msg.data.size() > 0) {
+		adas_signal_values[long_range] = info_msg.data[0];
+	}
 }
 
 void azimuth_cb(const std_msgs::Float32MultiArray& info_msg)
 {
-	adas_signal_values[azimuth] = info_msg.data[0];
+	if(info_msg.data.size() > 0) {
+		adas_signal_values[azimuth] = info_msg.data[0];
+	}
 }
 
 void lateral_distance_cb(const std_msgs::Float32MultiArray& info_msg)
 {
-	adas_signal_values[lat_range] = info_msg.data[0];
+	if(info_msg.data.size() > 0) {
+		adas_signal_values[lat_range] = info_msg.data[0];
+	}
 }
 
 void relative_lane_cb(const std_msgs::Int32MultiArray& info_msg)
 {
-	adas_signal_values[rel_lane] = info_msg.data[0];
+	if(info_msg.data.size() > 0) {
+		adas_signal_values[rel_lane] = info_msg.data[0];
+	}
 }
 
 void range_rate_cb(const std_msgs::Float32MultiArray& info_msg)
 {
-	adas_signal_values[range_rate] = info_msg.data[0];
+	if(info_msg.data.size() > 0) {
+		adas_signal_values[range_rate] = info_msg.data[0];
+	}
 }
 
 void brake_light_cb(const std_msgs::Int32& info_msg)
