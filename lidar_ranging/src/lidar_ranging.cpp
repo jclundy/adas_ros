@@ -45,8 +45,8 @@
 #define DEFAULT_RANGE_RATE -1.0
 #define MAX_NUM_OBJECTS 5
 
-int frame_center_X = 320;
-int frame_center_Y = 150;
+#define FRAME_CENTER_X 320;
+#define FRAME_CENTER_Y 150;
 
 cv::Point3d camera_position = cv::Point3d(-1.872, 0.0, 0.655);
 pcl::PointXYZ origin = pcl::PointXYZ(0,0,0);
@@ -109,8 +109,8 @@ class DetectionObject
   DetectionObject()
   {
     id = -1;
-    cx = 0;
-    cy = 0;
+    cx = FRAME_CENTER_X;
+    cy = FRAME_CENTER_Y;
     frame_width = 0;
     frame_height = 0;
     // detection state
@@ -202,6 +202,8 @@ class DetectionObject
     
   void estimate_range(std::vector<double> distances, int count)
   {
+    if(!frame_has_appeared) return;
+
     double measured_range = prev_range + range_rate * LIDAR_DATA_PERIOD_S;
 	  if(count > 0)
 	  {
@@ -212,12 +214,17 @@ class DetectionObject
     range = measured_range;
     range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
 
-    measurements[measurements_index] = measured_range;
-    if(measurement_count < MEASUREMENT_LIST_LENGTH && measured_range != 0)
+    if(no_detection_count < 2)
     {
-	    measurement_count++;
+      // we add the measurement to the running list of measurements only when a frame is detected, 
+      // this is to prevent erroneous estimations added to the list when estimating based on v 
+      measurements[measurements_index] = measured_range;
+      if(measurement_count < MEASUREMENT_LIST_LENGTH && measured_range != 0)
+      {
+	      measurement_count++;
+      }
+      measurements_index = (measurements_index + 1) % MEASUREMENT_LIST_LENGTH;
     }
-    measurements_index = (measurements_index + 1) % MEASUREMENT_LIST_LENGTH;
     filter_range_estimation(measured_range);
     prev_range_rate = range_rate;
     prev_range = range;
@@ -266,6 +273,18 @@ class DetectionObject
 			  }
 		  }
 	  }
+  }
+
+  void log_range_data()
+  {
+    // Log estimated distance
+    if(!frame_has_appeared) return;
+    std::printf("id: %i \t", id);
+	  std::printf("range_estimation: %f \t", range);
+	  std::printf("range rate: %f \t", range_rate);
+	  std::printf("camera x,y : (%i , %i) \t", cx, cy);
+	  std::printf("frame detected : %i \t", frame_detected);
+	  std::printf("measurement count : %i \n", measurement_count);
   }
 };
 
@@ -355,6 +374,7 @@ void estimate_ranges_for_all_detected_objects(cv::Point3d camera_position, pcl::
   // iterate through detection objects, getting distance estimate from histogram
   for (int j = 0; j < num_detection_objects; j++)
   {
+    if(!detection_objects[j].frame_has_appeared) continue;
     double range_estimation = detection_objects[j].prev_range;
 	  // generate sorted list of points
 	  if(count[j] > 0) {
@@ -367,6 +387,7 @@ void estimate_ranges_for_all_detected_objects(cv::Point3d camera_position, pcl::
 	  } else {
       detection_objects[j].estimate_range(distances[j], 0);
     }
+    detection_objects[j].log_range_data();
   }
 }
 
@@ -548,15 +569,6 @@ void visualize_ray(DetectionObject detection_object, ros::Publisher marker_pub)
 
 
 /************** Section 4: data logging functions ********************************/
-void log_range_data(DetectionObject detection_object)
-{
-  // Log estimated distance
-	std::printf("range_estimation: %f \t", detection_object.range);
-	std::printf("range rate: %f \t", detection_object.range_rate);
-	std::printf("camera x,y : (%i , %i) \t", detection_object.cx, detection_object.cy);
-	std::printf("frame detected : %i \t", detection_object.frame_detected);
-	std::printf("measurement count : %i \n", detection_object.measurement_count);
-}
 
 void publish_can_data()
 {
@@ -616,9 +628,8 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
    // 3. Get range estimations for all detection objects
   estimate_ranges_for_all_detected_objects(camera_position, origin, cloud_filtered);
   // Log estimated distance
-  log_range_data(detection_objects[0]);
   // Visualize range estimation
-  visualize_ray(detection_objects[0], marker_pub);
+  //visualize_ray(detection_objects[0], marker_pub);
 
   // 4. Publish data
 	// Publish point cloud	
@@ -681,11 +692,13 @@ int main (int argc, char** argv)
   ros::NodeHandle nh;
 
   std::printf("initializing detection object \n");
-  DetectionObject detectionObject_0;
+
   detection_objects.reserve(MAX_NUM_OBJECTS);
 	for(int i = 0; i < MAX_NUM_OBJECTS;i ++)
 	{
-		detection_objects[i] = detectionObject_0;
+    DetectionObject detectionObject;
+    detectionObject.id = i;
+		detection_objects[i] = detectionObject;
 	}
 	
   // Create a ROS subscriber for the input point cloud
