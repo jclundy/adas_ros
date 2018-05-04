@@ -37,7 +37,8 @@
 
 #define CENTER_X 320
 #define CENTER_U 200
-int C_X_OFFSET = -20; // this pixel offset corrects the horizontal alignment between the camera frame and lidar data
+int C_X_OFFSET = -25; // this pixel offset corrects the horizontal alignment between the camera frame and lidar data
+// -20 to -25 seems to work well
 
 #define LIDAR_DATA_RATE_HZ 10
 #define LIDAR_DATA_PERIOD_S 0.1
