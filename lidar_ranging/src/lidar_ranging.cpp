@@ -45,7 +45,8 @@
 // -20 to -25 seems to work well
 int C_X_OFFSET = -25;
 // ground elimination
-double MIN_Z = 0.1;
+double MIN_Z = 0.1; // up to 0.12 seems to work okay, 
+// 0.15 results in accurate points occasionally being rejected in the 10-15 meter range in VehApproachTest5  
 
 #define LIDAR_DATA_RATE_HZ 10
 #define LIDAR_DATA_PERIOD_S 0.1
@@ -160,6 +161,7 @@ class DetectionObject
 	  if(frame_detected)
 	  {
 		  frame_has_appeared = true;
+			no_detection_count = 0;
 	  } else if(frame_has_appeared) {
 		  no_detection_count++;
 		  if(no_detection_count > MAX_NO_DETECTION_COUNT)
@@ -172,7 +174,12 @@ class DetectionObject
 			  measurement_count = 0;
 			  measurements_index = 0;
 			  prev_range = 0;
+				prev_range_rate = 0;
+				range = 0;
         relative_lane = 0;
+				for (int i = 0; i < MEASUREMENT_LIST_LENGTH; i++) {
+					measurements[i] = 0;
+				}
 		  }
 	  }
   }
@@ -250,7 +257,7 @@ class DetectionObject
     range = measured_range;
     range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
 
-    if(no_detection_count < 2)
+    if(no_detection_count <= 2)
     {
       // we add the measurement to the running list of measurements only when a frame is detected, 
       // this is to prevent erroneous estimations added to the list when estimating based on v 
@@ -260,7 +267,13 @@ class DetectionObject
 	      measurement_count++;
       }
       measurements_index = (measurements_index + 1) % MEASUREMENT_LIST_LENGTH;
-    }
+    } else {
+				measurement_count = 0;
+				measurements_index = 0;
+		    for (int i = 0; i < MEASUREMENT_LIST_LENGTH; i++) {
+					measurements[i] = 0;
+				}
+		}
     filter_range_estimation(measured_range);
     prev_range_rate = range_rate;
     prev_range = range;
@@ -703,7 +716,6 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 #endif
 
 	// 4. Publish data for CAN bus
-  int object_index = 0;
   publish_can_data();
 }
 
