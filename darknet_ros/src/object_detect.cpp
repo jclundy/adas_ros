@@ -77,7 +77,7 @@ int relative_lane = 0;
 int frameCount = 0;
 std::chrono::duration<double> fps(17);
 
-int max_num_objects = 5;
+int max_num_objects = 10; // also change MAX_NUM_OBJECTS in lidar_ranging.cpp
 std::vector<int> centerX(max_num_objects,0);
 std::vector<int> centerY(max_num_objects,0);
 std::vector<int> frame_widths(max_num_objects,0);

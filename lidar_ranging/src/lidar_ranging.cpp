@@ -38,9 +38,14 @@
 
 #define CENTER_X 320
 #define CENTER_U 200
-int C_X_OFFSET = -25;
+
+
+// CALIBRATION PARAMETERS
 // this pixel offset corrects the horizontal alignment between the camera frame and lidar data
 // -20 to -25 seems to work well
+int C_X_OFFSET = -25;
+// ground elimination
+double MIN_Z = 0.1;
 
 #define LIDAR_DATA_RATE_HZ 10
 #define LIDAR_DATA_PERIOD_S 0.1
@@ -49,7 +54,7 @@ int C_X_OFFSET = -25;
 #define MEASUREMENT_LIST_LENGTH 5
 #define RANGE_MEASUREMENT_AVERAGE_DIFF_TOL 2
 #define DEFAULT_RANGE_RATE -1.0
-#define MAX_NUM_OBJECTS 5
+#define MAX_NUM_OBJECTS 10 // also change max_num_objects in object_detect.cpp
 
 #define FRAME_CENTER_X 320;
 #define FRAME_CENTER_Y 150;
@@ -61,7 +66,9 @@ int C_X_OFFSET = -25;
 cv::Point3d camera_position = cv::Point3d(-1.872, 0.0, 0.655);
 pcl::PointXYZ origin = pcl::PointXYZ(0,0,0);
 double theta_y = 0.02;
-double MIN_Z = 0.1;
+
+
+
 double MAX_Z = 6;
 double AZIMUTH_TOL_MULTIPLIER = 1;
 int num_detection_objects = MAX_NUM_OBJECTS;
@@ -759,23 +766,23 @@ int main (int argc, char** argv)
     detectionObject.id = i;
 		detection_objects[i] = detectionObject;
 	}
-	
+
   // Create a ROS subscriber for the input point cloud
   ros::Subscriber sub = nh.subscribe ("/velodyne_points", 1, cloud_cb);
-	
+
   // Create a ROS publisher for the output point cloud
   pub = nh.advertise<sensor_msgs::PointCloud2> ("lidar/cropped_cloud", 1);
 
 	// Create a ROS subscriber for the camera info
 	ros::Subscriber camera_info_sub = nh.subscribe("/videofile_test/camera_info", 1, camera_cb);
-	
+
 	// Create a ROS::ImageTransport publisher for the output point cloud
 	image_transport::ImageTransport it(nh);
-	
+
 	// Create ROS subscriber for frame_center_sub
 	ros::Subscriber frame_center_sub = nh.subscribe("/darknet_ros/frame_center",1,frame_cb);
 	ros::Subscriber frame_detected_sub = nh.subscribe("/darknet_ros/frame_detected",1,frame_detected_cb);
-  
+
 	distancePub = nh.advertise<std_msgs::Float32MultiArray>("/lidar_ranging/distance",1);
   range_rate_pub = nh.advertise<std_msgs::Float32MultiArray>("/lidar_ranging/range_rate",1);
 	azimuth_pub = nh.advertise<std_msgs::Float32MultiArray>("/lidar_ranging/azimuth",1);
