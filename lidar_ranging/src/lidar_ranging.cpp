@@ -734,7 +734,8 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 #endif
 
 	// 4. Publish data for CAN bus
-  publish_can_data();
+  //publish_can_data();
+	// if published in this callback, ranges will be published at 10 Hz
 }
 
 void frame_cb(const geometry_msgs::PoseArray pose_msg)
@@ -747,6 +748,8 @@ void frame_cb(const geometry_msgs::PoseArray pose_msg)
 		detection_objects[i].update_detection_frame(x,y,w);
 		detection_objects[i].update_ray(cam_model_,theta_y);
 	}
+	// if published in this callback, data will be published at 20 Hz
+	publish_can_data();
 }
 
 void frame_detected_cb(const std_msgs::Int8MultiArray& frame_detected_msg)
