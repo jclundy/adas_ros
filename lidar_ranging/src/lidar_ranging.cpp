@@ -34,8 +34,11 @@
 #define CAMERA_PIXEL_HEIGHT 400
 #define LIDAR_MAX_RANGE 100
 
+
 #define CENTER_X 320
 #define CENTER_U 200
+int C_X_OFFSET = -20; // this pixel offset corrects the horizontal alignment between the camera frame and lidar data
+
 #define LIDAR_DATA_RATE_HZ 10
 #define LIDAR_DATA_PERIOD_S 0.1
 #define MAX_RANGE_RATE 50 // m/s
@@ -52,8 +55,8 @@ cv::Point3d camera_position = cv::Point3d(-1.872, 0.0, 0.655);
 pcl::PointXYZ origin = pcl::PointXYZ(0,0,0);
 double theta_y = 0.02;
 double MIN_Z = 0.1;
-double MAX_Z = 3;
-double AZIMUTH_TOL = 0.014;
+double MAX_Z = 6;
+double AZIMUTH_TOL_MULTIPLIER = 1;
 
 int num_detection_objects = MAX_NUM_OBJECTS;
 
@@ -95,6 +98,7 @@ class DetectionObject
   cv::Point3d ray;
   double azimuth;
   double elevation;
+	double frame_angle_half_width;
   // range estimation variables
   double range;
   double prev_range;
@@ -121,6 +125,7 @@ class DetectionObject
     ray = cv::Point3d(0, 0, 0);
     azimuth = 0;
     elevation = 0;
+		frame_angle_half_width = 0;
     // range estimation variables
     range = 0;
     prev_range = 0;
@@ -168,13 +173,21 @@ class DetectionObject
 
   void update_ray(image_geometry::PinholeCameraModel cam_model_, double theta_y)
   {
-    
     //int modified_cx = 620 - cx;
     //if(modified_cx < 0) modified_cx = 0;
-    
-    cv::Point2d frame_center = cv::Point2d(cx, cy);
+		int corrected_cx = cx + C_X_OFFSET;
+    cv::Point2d frame_center = cv::Point2d(corrected_cx, cy);
 	  cv::Point3d camera_ray = cam_model_.projectPixelTo3dRay(frame_center);
-	
+
+		// calculate boundaries representing
+		cv::Point2d frame_left_border = cv::Point2d(corrected_cx - frame_width/2, cy);
+		cv::Point2d frame_right_border = cv::Point2d(corrected_cx + frame_width/2, cy);
+		cv::Point3d left_ray = cam_model_.projectPixelTo3dRay(frame_left_border);
+		cv::Point3d right_ray = cam_model_.projectPixelTo3dRay(frame_right_border);
+		double left_y = -left_ray.x;
+		double right_y = -right_ray.x;
+		double dy = std::abs(right_y - left_y)/2 * AZIMUTH_TOL_MULTIPLIER;
+
 	  // convert camera coordinate system to vlp-16 coordinate system convention
 	  double ray_world_x = camera_ray.z;
 	  double ray_world_z = camera_ray.y;
@@ -188,6 +201,7 @@ class DetectionObject
     //update azimuth and bearing    
     azimuth = std::atan(ray.y / ray.x);
     elevation = std::atan(ray.z / ray.x);
+		frame_angle_half_width = std::abs(std::atan(dy / ray.x));
   }
   
   void update_lateral_range()
@@ -356,7 +370,6 @@ void estimate_ranges_for_all_detected_objects(cv::Point3d camera_position, pcl::
 		
     double distance = calculate_distance(cloud_filtered->points[i], origin);
 		double elevation_tolerance = 0.01;
-		double azimuth_tolerance = AZIMUTH_TOL;
 
     // iterate through detection objects
     for (int j = 0; j < num_detection_objects; j++)
@@ -366,6 +379,7 @@ void estimate_ranges_for_all_detected_objects(cv::Point3d camera_position, pcl::
       double ray_azimuth = detection_objects[j].azimuth;
       double elevation_diff = std::abs(ray_elevation - point_elevation);
 		  double azimuth_diff = std::abs(ray_azimuth - point_bearing);
+			double azimuth_tolerance = detection_objects[j].frame_angle_half_width;
       if(azimuth_diff <= azimuth_tolerance && distance > 0.01 && z > MIN_Z && z < MAX_Z)
 		  {
 			  distances[j].push_back(distance);
@@ -565,10 +579,10 @@ void visualize_ray(DetectionObject detection_object, ros::Publisher marker_pub)
 	cv::Point3d lidar_position = cv::Point3d(0, 0, 0);
 	cv::Point3d end_point_50m = calculate_endpoint(projected_ray_xy_plane,lidar_position, 50);
 
-	draw_line(lidar_position, end_point_50m, marker_pub, 0.0, 0.0, 1.0, "points_and_lines_50m");
+	//draw_line(lidar_position, end_point_50m, marker_pub, 0.0, 0.0, 1.0, "points_and_lines_50m");
 	cv::Point3d end_point = calculate_endpoint(projected_ray_xy_plane,lidar_position, detection_object.range);
-	draw_line(lidar_position, end_point, marker_pub, 1.0, 0.0, 0.0, "points_and_lines");
-	draw_search_boundaries(projected_ray_xy_plane, lidar_position, 50, AZIMUTH_TOL, marker_pub);
+	draw_line(lidar_position, end_point, marker_pub, 0.0, 1.0, 0.0, "points_and_lines");
+	draw_search_boundaries(projected_ray_xy_plane, lidar_position, 50, detection_object.frame_angle_half_width, marker_pub);
 }
 /**************************** END *******************************************/
 
@@ -686,14 +700,14 @@ int main (int argc, char** argv)
 {
 	std::printf("running lidar ranging\n");
 	if(argc > 1) {
-		MIN_Z = std::atof(argv[1]);
-		std::printf("min z: %f\n", MIN_Z);
+		AZIMUTH_TOL_MULTIPLIER = std::atof(argv[1]);
+		std::printf("bearing tol multiplier: %f\n", AZIMUTH_TOL_MULTIPLIER);
 	} if (argc > 2) {
-		MAX_Z = std::atof(argv[2]);
-		std::printf("max z: %f\n", MAX_Z);
+		MIN_Z = std::atof(argv[2]);
+		std::printf("min z: %f\n", MIN_Z);
 	} if (argc > 3) {
-		AZIMUTH_TOL = std::atof(argv[3]);
-		std::printf("bearing tol: %f\n", AZIMUTH_TOL);
+		C_X_OFFSET = std::atof(argv[3]);
+		std::printf("cx offset: %f\n", C_X_OFFSET);
 	}
   // Initialize ROS
   ros::init (argc, argv, "lidar_ranging");
