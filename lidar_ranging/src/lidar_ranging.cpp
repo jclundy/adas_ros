@@ -31,49 +31,64 @@
 #include <string>
 #include <math.h>
 
+//#define PUBLISH_FILTERED_POINT_CLOUD // if this is enabled, it will also show the cropped/downsampled cloud we generate in rviz
+#define VIEW_RAYS // if this is enabled, you can see the rays / distance estimations in the point cloud
+#define DEBUG_LOGGING // if this is enabled, distance data and debug data will be published
+
 #define CAMERA_PIXEL_WIDTH 640
 #define CAMERA_PIXEL_HEIGHT 400
-#define LIDAR_MAX_RANGE 100
-
-
-#define CENTER_X 320
-#define CENTER_U 200
-
-
-// CALIBRATION PARAMETERS
-// this pixel offset corrects the horizontal alignment between the camera frame and lidar data
-// -20 to -25 seems to work well
-int C_X_OFFSET = -25;
-// ground elimination
-double MIN_Z = 0.1; // up to 0.12 seems to work okay, 
-// 0.15 results in accurate points occasionally being rejected in the 10-15 meter range in VehApproachTest5  
-
-#define LIDAR_DATA_RATE_HZ 10
-#define LIDAR_DATA_PERIOD_S 0.1
-#define MAX_RANGE_RATE 50 // m/s
-#define MAX_NO_DETECTION_COUNT 10
-#define MEASUREMENT_LIST_LENGTH 5
-#define RANGE_MEASUREMENT_AVERAGE_DIFF_TOL 2
-#define DEFAULT_RANGE_RATE -1.0
-#define MAX_NUM_OBJECTS 10 // also change max_num_objects in object_detect.cpp
-
 #define FRAME_CENTER_X 320;
 #define FRAME_CENTER_Y 150;
 
-//#define PUBLISH_FILTERED_POINT_CLOUD
-#define VIEW_RAYS
-#define DEBUG_LOGGING
+#define LIDAR_MAX_RANGE 100
+#define LIDAR_DATA_RATE_HZ 10
+#define LIDAR_DATA_PERIOD_S 0.1
+#define MAX_RANGE_RATE 50 // m/s  this is used to filter out new range estimations that would result in unrealistic speeds
+#define DEFAULT_RANGE_RATE -1.0 // the assumed initial range rate for a new detection object
 
+#define MAX_NUM_OBJECTS 10 // also change max_num_objects in object_detect.cpp
+#define MAX_NO_DETECTION_COUNT 10 // the number of 'no detections' before a tracking object is deactivated
+#define MEASUREMENT_LIST_LENGTH 5 // the size of a running list of measurements used for averaging
+
+// measurements can be rejected if they jump significantly from the previous baseline value
+// if 5 (rejected) measurements agree with the new measurement within this tol, the new measuremnt will be treated as the new baseline value
+#define RANGE_MEASUREMENT_AVERAGE_DIFF_TOL 2
+
+/************** CALIBRATION PARAMETERS ********************/
+// The two most useful parameters are C_X_OFFSET and MIN_Z
+
+// this pixel offset corrects the horizontal alignment between the camera frame and lidar data
+// -20 to -25 seems to work well
+int C_X_OFFSET = -25;
+
+//this is for ground elimination
+// up to 0.12 seems to work okay, 0.15 results in accurate points occasionally being rejected in the 10-15 meter range in VehApproachTest5
+double MIN_Z = 0.1;
+
+// this can help eliminate erroneous measurements, as most cars / pedestrians / trucks will be under 6m
+double MAX_Z = 6;
+
+// camera position relative to the lidar
 cv::Point3d camera_position = cv::Point3d(-1.872, 0.0, 0.655);
+
+// the lidar is treated as the origin 0,0,0 (x,y,z)
 pcl::PointXYZ origin = pcl::PointXYZ(0,0,0);
+
+// this theta is used to slightly rotate the the ray up or down
+// based on my tests, the accuracy is the same without applying this rotation
+//#define USE_THETA_Y //enable this to apply the rotation
 double theta_y = 0.02;
 
+// if AZIMUTH_TOL_MULTIPLIER is 1, we use an angle equal to the 'angle' of bounding box to search for points
+double AZIMUTH_TOL_MULTIPLIER = 0.8;
 
-
-double MAX_Z = 6;
-double AZIMUTH_TOL_MULTIPLIER = 1;
-int num_detection_objects = MAX_NUM_OBJECTS;
+// shouldn't need to apply downsampling, especially if the sheath is on the lidar (which reduces number of detected points)
+// if the performance is very slow, then try applying downsampling
+// also downsampling can reduce the range estimation accuracy, especially at further distances > 30 m
 bool apply_downsampling = false;
+
+/************** END *********************************************/
+
 
 //publishers
 ros::Publisher pub;
@@ -196,8 +211,6 @@ class DetectionObject
 
   void update_ray(image_geometry::PinholeCameraModel cam_model_, double theta_y)
   {
-    //int modified_cx = 620 - cx;
-    //if(modified_cx < 0) modified_cx = 0;
 		int corrected_cx = cx + C_X_OFFSET;
     cv::Point2d frame_center = cv::Point2d(corrected_cx, cy);
 	  cv::Point3d camera_ray = cam_model_.projectPixelTo3dRay(frame_center);
@@ -216,10 +229,14 @@ class DetectionObject
 	  double ray_world_z = camera_ray.y;
 	  double ray_world_y = -camera_ray.x; // -ve so that the resulting azimuth is not mirrored in the real world
 
-	  // apply rotation
-	  ray.x = std::cos(theta_y)*ray_world_x + std::sin(theta_y)*ray_world_z;
+		ray.y = ray_world_y;
+		ray.x = ray_world_x;
+		ray.z = ray_world_z;
+#ifdef USE_THETA_Y
+		// apply rotation around y-axis
+		ray.x = std::cos(theta_y)*ray_world_x + std::sin(theta_y)*ray_world_z;
 	  ray.z = -std::sin(theta_y)*ray_world_x + std::cos(theta_y)*ray_world_z;
-	  ray.y = ray_world_y;
+#endif
     
     //update azimuth and bearing    
     azimuth = std::atan(ray.y / ray.x);
@@ -347,6 +364,7 @@ class DetectionObject
 };
 
 /************** END *******************/
+// global variable of list of tracked objects
 std::vector<DetectionObject> detection_objects;
 
 /************** Section 1: Functions for processing the point cloud ************/
@@ -387,10 +405,10 @@ float calculate_distance(pcl::PointXYZ p1, pcl::PointXYZ p2)
 
 void estimate_ranges_for_all_detected_objects(cv::Point3d camera_position, pcl::PointXYZ origin, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered)
 {
-	std::vector<std::vector<double> > distances(num_detection_objects, std::vector<double>(0));
-	std::vector<std::vector<double> >distances_2(num_detection_objects, std::vector<double>(0));
-	std::vector<int> count(num_detection_objects, 0);
-	std::vector<int> count_2(num_detection_objects, 0);
+	std::vector<std::vector<double> > distances(MAX_NUM_OBJECTS, std::vector<double>(0));
+	std::vector<std::vector<double> >distances_2(MAX_NUM_OBJECTS, std::vector<double>(0));
+	std::vector<int> count(MAX_NUM_OBJECTS, 0);
+	std::vector<int> count_2(MAX_NUM_OBJECTS, 0);
 	int num_points = cloud_filtered->points.size();
 
   // iterate through point cloud
@@ -411,7 +429,7 @@ void estimate_ranges_for_all_detected_objects(cv::Point3d camera_position, pcl::
 		double elevation_tolerance = 0.01;
 
     // iterate through detection objects
-    for (int j = 0; j < num_detection_objects; j++)
+    for (int j = 0; j < MAX_NUM_OBJECTS; j++)
     {
 			if(!detection_objects[j].frame_has_appeared) continue;
       double ray_elevation = detection_objects[j].elevation;
@@ -430,7 +448,7 @@ void estimate_ranges_for_all_detected_objects(cv::Point3d camera_position, pcl::
     }
   }
   // iterate through detection objects, getting distance estimate from histogram
-  for (int j = 0; j < num_detection_objects; j++)
+  for (int j = 0; j < MAX_NUM_OBJECTS; j++)
   {
     if(!detection_objects[j].frame_has_appeared) continue;
     double range_estimation = detection_objects[j].prev_range;
@@ -629,7 +647,7 @@ void visualize_ray(DetectionObject detection_object, ros::Publisher marker_pub)
 
 void view_all_rays(ros::Publisher marker_pub)
 {
-	for (int i = 0; i < num_detection_objects; i++)
+	for (int i = 0; i < MAX_NUM_OBJECTS; i++)
 	{
 		if(detection_objects[i].frame_has_appeared)
 		{
@@ -646,7 +664,7 @@ void publish_can_data()
 {
   std_msgs::MultiArrayLayout layout = std_msgs::MultiArrayLayout();
   layout.dim.push_back(std_msgs::MultiArrayDimension());
-  layout.dim[0].size = num_detection_objects;
+  layout.dim[0].size = MAX_NUM_OBJECTS;
   layout.dim[0].stride = 1;
   layout.dim[0].label = "length";
 
@@ -661,7 +679,7 @@ void publish_can_data()
   std_msgs::Int32MultiArray lane_msg;
   lane_msg.layout = layout;
   
-  for (int i = 0; i < num_detection_objects; i++)
+  for (int i = 0; i < MAX_NUM_OBJECTS; i++)
   {
     dist_msg.data.push_back(detection_objects[i].range);
     range_rate_msg.data.push_back(detection_objects[i].range_rate);
