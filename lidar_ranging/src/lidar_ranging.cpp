@@ -28,6 +28,7 @@
 #include <pcl/visualization/common/float_image_utils.h>
 #include <pcl/surface/mls.h>
 // c++ std
+#include <string>
 #include <math.h>
 
 #define CAMERA_PIXEL_WIDTH 640
@@ -37,7 +38,8 @@
 
 #define CENTER_X 320
 #define CENTER_U 200
-int C_X_OFFSET = -25; // this pixel offset corrects the horizontal alignment between the camera frame and lidar data
+int C_X_OFFSET = -25;
+// this pixel offset corrects the horizontal alignment between the camera frame and lidar data
 // -20 to -25 seems to work well
 
 #define LIDAR_DATA_RATE_HZ 10
@@ -52,14 +54,18 @@ int C_X_OFFSET = -25; // this pixel offset corrects the horizontal alignment bet
 #define FRAME_CENTER_X 320;
 #define FRAME_CENTER_Y 150;
 
+//#define PUBLISH_FILTERED_POINT_CLOUD
+#define VIEW_RAYS
+#define DEBUG_LOGGING
+
 cv::Point3d camera_position = cv::Point3d(-1.872, 0.0, 0.655);
 pcl::PointXYZ origin = pcl::PointXYZ(0,0,0);
 double theta_y = 0.02;
 double MIN_Z = 0.1;
 double MAX_Z = 6;
 double AZIMUTH_TOL_MULTIPLIER = 1;
-
 int num_detection_objects = MAX_NUM_OBJECTS;
+bool apply_downsampling = false;
 
 //publishers
 ros::Publisher pub;
@@ -151,7 +157,9 @@ class DetectionObject
 		  no_detection_count++;
 		  if(no_detection_count > MAX_NO_DETECTION_COUNT)
 		  {
+#ifdef DEBUG_LOGGING
 			  std::printf("lost the detection\n");
+#endif
 			  frame_has_appeared = false;
 			  no_detection_count = 0;
 			  measurement_count = 0;
@@ -228,7 +236,9 @@ class DetectionObject
 	  {
 		  measured_range = estimate_distance_from_histogram(distances);
 	  } else {
+#ifdef DEBUG_LOGGING
 		  std::printf("no points detected, estimating based on range rate \n");
+#endif
 	  }
     range = measured_range;
     range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
@@ -278,16 +288,22 @@ class DetectionObject
           double measurement_diff_with_average = abs(average_of_prev_measurements - measured_range);
 				  if(measurement_diff_with_average < RANGE_MEASUREMENT_AVERAGE_DIFF_TOL)
 				  {
+#ifdef DEBUG_LOGGING
 					  std::printf("readjusting to new range baseline\n");
+#endif
 					  prev_range = average_of_prev_measurements;
 					  range_rate = (measured_range - prev_range) * LIDAR_DATA_RATE_HZ;
 				  } else {
+#ifdef DEBUG_LOGGING
 					  std::printf("invalid range rate %f / distance estimation %f \n",range_rate, measured_range);
+#endif
 					  range_rate = prev_range_rate;
 					  range = predicted_range;
 				  }
 			  } else {
+#ifdef DEBUG_LOGGING
 				  std::printf("invalid range rate %f \n", range_rate);
+#endif
 				  range_rate = prev_range_rate;
 			  }
 		  }
@@ -298,6 +314,7 @@ class DetectionObject
   {
     // Log estimated distance
     if(!frame_has_appeared) return;
+#ifdef DEBUG_LOGGING
     std::printf("id: %i \t", id);
 	  std::printf("range_estimation: %f \t", range);
 	  std::printf("range rate: %f \t", range_rate);
@@ -305,6 +322,7 @@ class DetectionObject
     std::printf("azimuth: %f \t", azimuth);
     std::printf("lane: %i \t", relative_lane);
 	  std::printf("frame detected : %i \n", frame_detected);
+#endif
   }
 };
 
@@ -403,7 +421,9 @@ void estimate_ranges_for_all_detected_objects(cv::Point3d camera_position, pcl::
 	  } else if (count_2[j] > 0) {
 		  std::sort (distances_2[j].begin(), distances_2[j].end());
 		  detection_objects[j].estimate_range(distances_2[j], count_2[j]);
+#ifdef DEBUG_LOGGING
 		  std::printf("loosened tolerance to find enough points \n");
+#endif
 	  } else {
       detection_objects[j].estimate_range(distances[j], 0);
     }
@@ -502,10 +522,10 @@ double calculate_average(double measurements[], int count)
 
 
 /************** Section 3: Functions for visualizing the distance estimation ************/
-void draw_line(cv::Point3d start_point, cv::Point3d end_point, ros::Publisher marker_pub, double line_r, double line_g, double line_b, std::string name)
+void draw_line(cv::Point3d start_point, cv::Point3d end_point, ros::Publisher marker_pub, double line_r, double line_g, double line_b, std::string name, int obj_id)
 {
 		std::string frame_id = "velodyne";
-		std::string ns = name;
+		std::string ns = name + boost::lexical_cast<std::string>(obj_id);
 		visualization_msgs::Marker points, line_strip;
     points.header.frame_id = line_strip.header.frame_id = frame_id;
     points.header.stamp = line_strip.header.stamp = ros::Time::now();
@@ -549,7 +569,7 @@ void draw_line(cv::Point3d start_point, cv::Point3d end_point, ros::Publisher ma
   	marker_pub.publish(line_strip);
 }
 
-double draw_search_boundaries(cv::Point3d ray, cv::Point3d start_point, double r, double angle_tolerance, ros::Publisher marker_pub)
+double draw_search_boundaries(cv::Point3d ray, cv::Point3d start_point, double r, double angle_tolerance, ros::Publisher marker_pub, int obj_id)
 {
 	double ray_length = calculate_ray_length(ray);
 	double myx = ray.y / ray.x;
@@ -566,10 +586,10 @@ double draw_search_boundaries(cv::Point3d ray, cv::Point3d start_point, double r
 	ray_right.y = ray_length * sin(theta_right);
 
 	cv::Point3d left_end_point = calculate_endpoint(ray_left,start_point, r);
-	draw_line(start_point, left_end_point, marker_pub, 1.0, 0.0, 0.0, "offset_left_ray");
+	draw_line(start_point, left_end_point, marker_pub, 1.0, 0.0, 0.0, "offset_left_ray", obj_id);
 
 	cv::Point3d right_end_point = calculate_endpoint(ray_right,start_point, r);
-	draw_line(start_point, right_end_point, marker_pub, 1.0, 0.0, 0.0, "offset_right_ray");
+	draw_line(start_point, right_end_point, marker_pub, 1.0, 0.0, 0.0, "offset_right_ray", obj_id);
 }
 
 void visualize_ray(DetectionObject detection_object, ros::Publisher marker_pub)
@@ -580,10 +600,22 @@ void visualize_ray(DetectionObject detection_object, ros::Publisher marker_pub)
 	cv::Point3d lidar_position = cv::Point3d(0, 0, 0);
 	cv::Point3d end_point_50m = calculate_endpoint(projected_ray_xy_plane,lidar_position, 50);
 
+	int obj_id = detection_object.id;
 	//draw_line(lidar_position, end_point_50m, marker_pub, 0.0, 0.0, 1.0, "points_and_lines_50m");
 	cv::Point3d end_point = calculate_endpoint(projected_ray_xy_plane,lidar_position, detection_object.range);
-	draw_line(lidar_position, end_point, marker_pub, 0.0, 1.0, 0.0, "points_and_lines");
-	draw_search_boundaries(projected_ray_xy_plane, lidar_position, 50, detection_object.frame_angle_half_width, marker_pub);
+	draw_line(lidar_position, end_point, marker_pub, 0.0, 1.0, 0.0, "points_and_lines", obj_id);
+	draw_search_boundaries(projected_ray_xy_plane, lidar_position, 50, detection_object.frame_angle_half_width, marker_pub, obj_id);
+}
+
+void view_all_rays(ros::Publisher marker_pub)
+{
+	for (int i = 0; i < num_detection_objects; i++)
+	{
+		if(detection_objects[i].frame_has_appeared)
+		{
+		  visualize_ray(detection_objects[i], marker_pub);
+		}
+	}
 }
 /**************************** END *******************************************/
 
@@ -630,6 +662,7 @@ void publish_can_data()
 	relative_lane_pub.publish(lane_msg);
   
 }
+
 /**************************** END *******************************************/
 
 /************** Section 5: callback functions ********************************/
@@ -643,23 +676,26 @@ void cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 	// Apply passthrough filter
 	apply_passthrough_filter(cloud, cloud_filtered);
 	// Downsampling
-	//downsample(cloud_filtered, cloud_filtered);
-	
-   // 3. Get range estimations for all detection objects
-  estimate_ranges_for_all_detected_objects(camera_position, origin, cloud_filtered);
-  // Log estimated distance
-  // Visualize range estimation
-  if(detection_objects[0].frame_has_appeared)
-  {
-    visualize_ray(detection_objects[0], marker_pub);
-  }
-
-  // 4. Publish data
-	// Publish point cloud	
+	if(apply_downsampling)
+	{
+		downsample(cloud_filtered, cloud_filtered);
+	}
+#ifdef PUBLISH_FILTERED_POINT_CLOUD
+	// Publish point cloud
   sensor_msgs::PointCloud2 output;
 	pcl::toROSMsg(*cloud_filtered, output);
 	pub.publish (output);
-	// Publish info for CAN bus
+#endif
+
+  // 2. Get range estimations for all detection objects
+  estimate_ranges_for_all_detected_objects(camera_position, origin, cloud_filtered);
+
+	// 3. Visualize range estimation
+#ifdef VIEW_RAYS
+  view_all_rays(marker_pub);
+#endif
+
+	// 4. Publish data for CAN bus
   int object_index = 0;
   publish_can_data();
 }
@@ -708,7 +744,7 @@ int main (int argc, char** argv)
 		std::printf("min z: %f\n", MIN_Z);
 	} if (argc > 3) {
 		C_X_OFFSET = std::atof(argv[3]);
-		std::printf("cx offset: %f\n", C_X_OFFSET);
+		std::printf("cx offset: %i\n", C_X_OFFSET);
 	}
   // Initialize ROS
   ros::init (argc, argv, "lidar_ranging");
