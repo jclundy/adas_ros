@@ -1,3 +1,7 @@
+See design reports and presentations for lidar-camera sensor fusion on google drive: [UWAFT ADAS Developer](https://drive.google.com/drive/folders/1hY_oJtX0f3rVMeduFmjDEalWaxDfT7E8?usp=sharing)
+
+Original README below:
+
 # adas_ros
 Where it all comes together. This is the main program that will run the ADAS system in the car on the Jetson TX2.
 
