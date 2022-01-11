@@ -1,5 +1,7 @@
 See design reports and presentations for lidar-camera sensor fusion on google drive: [UWAFT ADAS Developer](https://drive.google.com/drive/folders/1hY_oJtX0f3rVMeduFmjDEalWaxDfT7E8?usp=sharing)
 
+[Demo Video](https://youtu.be/O_uSx8EeZ4Y)
+
 Original README below:
 
 # adas_ros
